@@ -1,0 +1,99 @@
+<p>
+
+Transform plugins可以用于检查或转换 HTTP 消息体内容. 比如:
+
+    <ul>
+
+        <li>给 HTML 文档增加内容
+
+        <li>压缩图片
+
+        <li>病毒检查(在客户端白 POST 数据还有 服务器的数据)
+
+        <li>内容过滤(过滤出特定条款或表达式的 HTML docuemnts)
+    </ul></p>
+
+<p>本文章解析了如何去编写Transform plugins, 下面的例子会被详细讨论:
+
+    <ul>
+
+        <li>&nbsp;<a href=https://docs.trafficserver.apache.org/en/latest/sdk/http-transformation-plugin/sample-null-transformation-plugin.en.html >The Sample Null Transform Plugin</a>&nbsp;
+        <li>&nbsp;<a href=https://docs.trafficserver.apache.org/en/latest/sdk/http-transformation-plugin/append-transform-plugin.en.html >The Append-Transform Plugin</a>&nbsp;
+        <li>&nbsp;<a href=https://docs.trafficserver.apache.org/en/latest/sdk/http-transformation-plugin/sample-buffered-null-transformation-plugin.en.html >The Sample Buffered Null Transform Plugin</a>&nbsp;
+    </ul></p>
+
+<h3>Writing Content Transform Plugins</h3>
+<p>Transform plugins可以转换 HTTP 响应内存(如: images or HTML docuemnts) 还有 HTTP 请求内容
+(如 客户端的 POST 数据). 因为数据长度是可变的, 所以Transform plugins必然有一个机制可以
+从一个 buffer 传递到另一个 buffer, 同时还要检查数据流是不是结束了.
+这个机制通过虚拟连接(VConnection) 还有 虚拟IO 描述符支持.</p>
+
+<p>VConnection是一个抽象的数据管道, 可以让用户不必了解底层的实现来实现
+对于读写进行操作.
+Transfromation是一个特定类型的VConnection. 一个连接了一个输入数据源和一个输出数据槽.
+这个特性, 可以让它查看或修改经过它的所有的数据.</p>
+
+<p>多个Transfromation也可以串联起来, 因此多个Transfromation可以在相同的内存上进行操作.VConnection的类型 <b>TSVConn</b>是<b>TSCont</b>的一个子类, 这意味着多个
+VConnection(或是Transfromation) 是其的一个延伸.
+多个VConnection和Transfromation之间可以交换事件, 通知对方读写状态是不是可用, 或者数据
+流结束了.</p>
+
+<p>一个VIO IO 描述符是一个系统运行中的描述符. 每一个VConnection有一个关联的
+<b>input VIO</b>还有一个关联的<b>output VIO</b>. 当VConnection 要传输数据
+给另一个时, 一个VConnection的输入 VIO 是别一个VConnection的输出 VIO. 一个 VConnection的输入
+VIO 也是称为 <b>write VIO</b>, 因为输入 VIO 指向VConnection自身的写操作.
+相似的, 输入 VIO 也是称为<b>read VIO</b>. 对于Transfromation而言, 它被设计为
+沿一个方向转递数据. 其关系如下:</p>
+
+<p><img src=http://i4.tietuku.com/d7bc7e318fbc5195.jpg >
+Transfromation VConnection仅负责用于从输入缓冲器读取数据，将其转化，然后将其写入到输出缓冲区,
+因为Traffic Server把Transfromation直接用于响应或请求的数据流.
+上流的VConnection流入的数据写入到Transfromation的输入 buffer. 如上图显示的, 一个Transfromation和
+其VIO, 其输入的VIO 表示了 upstream VConnection的写操作进度, Transfromation输出 VIO
+指向了 write 到下一个VConnection的进度. VIO 中<b>nbytes</b>表示要写入的总的数据量.
+<b>ndone</b>值表示当前的进度或某个时间写入的 bytes.</p>
+
+<p>当你编写一个Transform plugins你必须了解VConnection的运行情况.
+实现者重于实现一个VConnection, 其它用户只用知道如何去使用.
+最低限度, 一个Transform plugins创建一个位于数据流中的Transfromation, 同时必须能处理处理上游与
+下流的VConnection发送给它的事件.
+用户要指出如何使用VConnection来读写数据. 最起码, Transfromation要输出数据.</p>
+
+<h3>Transformations</h3>
+<p></p>
+
+<h4>VIOS</h4>
+<p>The VIO data structure is used by VConnection users to determine how much
+ progress has been made on a particular IO operation, and to reenable an IO
+ operation when it stalls due to buffer space.</p>
+
+<p> VConnection implementors use VIOs to determine the buffer for an IO operation,
+ how much work to do on the IO operation, and which continuation to
+ call back when progress on the IO operation is made.</p>
+
+<p><b>TSVIO</b>数据结构自身是不透明的, 其定义可能如下:
+<pre>
+typedef struct {
+   TSCont continuation;
+   TSVConn vconnection;
+   TSIOBufferReader reader;
+   TSMutex mutex;
+   int nbytes;
+   int ndone;
+} *TSVIO;
+</pre>
+</p>
+
+<h4>IO Buffers</h4>
+<p><b>IO buffer</b>数据结构是VConnection的抽象构建块.
+An IO buffer is composed of a list of buffer blocks which, in turn, point to buffer data.
+Both the buffer block (TSIOBufferBlock) and buffer data (TSIOBufferData) data structures
+are reference counted so they can reside in multiple buffers at the same time.
+This makes it extremely efficient to copy data from one IO buffer to another using TSIOBufferCopy,
+since Traffic Server only needs to copy pointers and adjust reference counts appropriately (instead of actually copying any data).</p>
+
+<p>The IO buffer abstraction provides for a single writer and multiple readers.
+In order for the readers to have no knowledge of each other,
+they manipulate IO buffers through theTSIOBufferReader data structure.
+Since only a single writer is allowed, there is no corresponding TSIOBufferWriter data structure.
+The writer simply modifies the IO buffer directly.</p>

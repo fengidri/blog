@@ -1,0 +1,37 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Title: run cmd in other term
+%Class: linux
+%Post:1
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+一些时候, 其实就是想运行一些命令看一下结果, 但是又不想影响当前的操作, 那么只能
+开一个新的终端了. 如果可以不离开当前的终端让命令运行于其它的终端就方便了.
+tmux 有相似的功能. 但是我并不总是使用 tmux, 想找一个更加通用的方法.
+使用 pts 就是一个合适的方式, 如下的代码就可以完成这个功能:
+
+\starttyping
+#!/usr/bin/python
+
+import sys,os,fcntl,termios
+if len(sys.argv) != 3:
+   sys.stderr.write("usage: ttyexec.py tty command\n")
+   sys.exit(1)
+fd = os.open("/dev/" + sys.argv[1], os.O_RDWR)
+cmd=sys.argv[2]
+for i in range(len(cmd)):
+   fcntl.ioctl(fd, termios.TIOCSTI, cmd[i])
+fcntl.ioctl(fd, termios.TIOCSTI, '\n')
+os.close(fd)
+\stoptyping
+
+但是这个必须要超级权限, 对于脚本使用 S 权限是不行的, 因为实际的运行程序是 python.
+这个时候只能用 c 写了.
+使用方法:
+\starttyping
+ttyrun 7 ls
+ttyrun 7 ping www.baidu.com
+ttyrun 7 -c // send INTR 信息
+\stoptyping
+
+\goto{脚本在这里}{https://github.com/fengidri/linux-C/tree/master/tty}
+
+对于调试会很方便, 在vim 里编辑, 另外开启一个终端,  不离开 vim, 把测试的命令发送的终端里运行显示出来.

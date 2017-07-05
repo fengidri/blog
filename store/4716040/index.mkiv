@@ -1,0 +1,186 @@
+%title:单例模式
+\section{单例模式}
+保证系统有且只有一个实例而且该实例易于外界访问，从而方便对实例个数的控制并节约系统资源. 能体现一种责任的管理.
+
+要实现这个功能核心是改变一个类的正常的实例化过程. 
+
+本文讨论python 与C/C++的单例的实现与类的实例化的一些细节内容.
+
+\section{实例化的过程}
+本质来讲实例过程是内存的分配, 与初始化.
+C/C++ 是直接操作内存的所以不能在实例的过程中给我们更多的接口. 
+所以C/C++ 中实例的过程与内存的分配过程是完全结合的, 不可分割的. 
+构造函数中只是完成了初始化的过程, 并不影响对象的创造.
+但是在python的实例过程中我们还大有可为. 
+
+python 类的实例过程中对于内存的分配是通过__new__来实现的. 
+也就是说实例的过程中对象的创建(内存的分配)是在 __new__ 中完成的.  
+之后才在必要的情况下调用__init__ 进行初始化. 这与python 的动态与C/C++的静态之间的语言上的根本性的区别.
+
+\section{python 的单例}
+寻么python 中的单例模式就比较优雅一些:
+\starttyping
+class Singleton(object):  
+    def __new__(cls, *args, **kw):  
+        if not hasattr(cls, '_instance'):  
+            orig = super(Singleton, cls)  
+            cls._instance = orig.__new__(cls, *args, **kw)  
+        return cls._instance
+\stoptyping
+
+当然还有比较高级的方法:
+
+
+\starttyping
+#####################################################################
+#使用元类(metaclass)
+#####################################################################
+class Singleton2(type):  
+    def __init__(cls, name, bases, dict):  
+        super(Singleton2, cls).__init__(name, bases, dict)  
+        cls._instance = None  
+    def __call__(cls, *args, **kw):  
+        if cls._instance is None:  
+            cls._instance = super(Singleton2, cls).__call__(*args, **kw)  
+        return cls._instance  
+  
+class MyClass3(object):  
+    __metaclass__ = Singleton2  
+  
+#####################################################################
+#使用装饰器(decorator),  
+#####################################################################
+#这是一种更pythonic,更elegant的方法,  
+#单例类本身根本不知道自己是单例的,因为他本身(自己的代码)并不是单例的  
+#这也有问题, 改变的了类的一些特性, 因为类的本身已经不再是类了而是一个函数
+def singleton(cls, *args, **kw):  
+    instances = {}  
+    def _singleton():  
+        if cls not in instances:  
+            instances[cls] = cls(*args, **kw)  
+        return instances[cls]  
+    return _singleton  
+ 
+@singleton  
+class MyClass4(object):  
+    a = 1  
+    def __init__(self, x=0):  
+        self.x = x  
+\stoptyping
+
+
+\section{C++的单例}
+C++ 中由于不能干预实例的过程, 所以一个解决方法是不允许正常的实例过程. 这相对于python来说就没有那么优雅了. 
+这样的吧, 总有一个方法得到这个对象吧! 所以必须要实现一个类的static 方法用于得到对象. 
+
+无论实例的过程如何, 单例的一个基本的思路是通过一种变量来记录一个对象, 在请求的时候返回这个对象. 
+那么如何记录这个对象呢? 在C++ 中有两种思路.static local  variable 和 static variable of class.
+分别来自《Effective C++》,《大话设计模式》.
+
+前者代码如下:
+
+在C++memory model中对static local variable，说道：
+The initialization of such a variable is defined to occur the first time control passes through its declaration; 
+for multiple threads calling the function, this means there’s the potential for a race condition to define first.
+所以这个方法是多线程安全的. 
+\starttyping
+widget& widget::get_instance() {
+    static widget instance;
+    return instance;
+}
+\stoptyping
+
+后者如下:
+\starttyping
+ class CSingleton
+ {
+ private:
+     CSingleton() //构造函数是私有的
+     {
+     }
+     static CSingleton *m_pInstance;
+ public:
+     static CSingleton * GetInstance()
+     {
+         if (m_pInstance == NULL) //判断是否第一次调用
+             m_pInstance = new CSingleton();
+         return m_pInstance;
+     }
+ };
+\stoptyping
+
+\section{多线程下的C++单例}
+
+为了可以在多线程下的情况下实现单例, 一个基本有效的思路是通过锁. 这个就不多说了. 
+这样面临的一个新问题是每次调用GetInstance函数都要进入临界区，尤其是在heavy contention情况下函数将会成为系统的性能瓶颈，
+我们伟大的程序员发现我们不必每次调用GetInstance函数时都去获取锁，只是在第一次new这个实例的时候才需要同步，所以伟大的程序员们发明了著名的DCL技法，即Double Check Lock，代码如下：
+
+\starttyping
+Widget* Widget::pInstance{ nullptr };
+Widget* Widget::Instance() {
+    if (pInstance == nullptr) { // 1: first check
+        lock_guard<mutex> lock{ mutW };
+        if (pInstance == nullptr) { // 2: second check
+            pInstance = new Widget(); 
+        }
+    } 
+    return pInstance;
+}
+\stoptyping
+
+曾今有一段时间，这段代码是被认为正确无误的，但是一群伟大的程序员们发现了其中的bug！
+并且联名上书表示这份代码是错误的。
+要解释其中为什么出现了错误，需要读者十分的熟悉memory model，
+这里我就不详细的说明了，一句话就是在这份代码中第三行代码：if (pInstance == nullptr)和
+第六行代码pInstance = new Widget();没有正确的同步，在某种情况下会出现new返回了地址赋值给pInstance变量而Widget此时还没有构造完全，
+当另一个线程随后运行到第三行时将不会进入if从而返回了不完全的实例对象给用户使用，造成了严重的错误。
+在C++11没有出来的时候，只能靠插入两个memory barrier来解决这个错误，但是C++11已经出现了好几年了，
+其中我认为最重要的是引进了memory model，从此C++11也能识别线程这个概念了！
+
+　　因此，在有了C++11后我们就可以正确的跨平台的实现DCL模式了，代码如下：
+\starttyping
+atomic<Widget*> Widget::pInstance{ nullptr };
+Widget* Widget::Instance() {
+    if (pInstance == nullptr) { 
+        lock_guard<mutex> lock{ mutW }; 
+        if (pInstance == nullptr) { 
+            pInstance = new Widget(); 
+        }
+    } 
+    return pInstance;
+}
+\stoptyping
+
+C++11中的atomic类的默认memory_order_seq_cst保证了3、6行代码的正确同步，由于上面的atomic需要一些性能上的损失，因此我们可以写一个优化的版本：
+
+\starttyping
+atomic<Widget*> Widget::pInstance{ nullptr };
+Widget* Widget::Instance() {
+    Widget* p = pInstance;
+    if (p == nullptr) { 
+        lock_guard<mutex> lock{ mutW }; 
+        if ((p = pInstance) == nullptr) { 
+            pInstance = p = new Widget(); 
+        }
+    } 
+    return p;
+}
+\stoptyping
+
+但是，C++委员会考虑到单例模式的广泛应用，所以提供了一个更加方便的组件来完成相同的功能：
+\starttyping
+static unique_ptr<widget> widget::instance;
+static std::once_flag widget::create;
+widget& widget::get_instance() {
+    std::call_once(create, [=]{ instance = make_unique<widget>(); });
+    return instance;
+}
+\stoptyping
+
+
+
+\section{参考}
+\startitemize
+\item  \goto[C++程序员们，快来写最简洁的单例模式吧][http://www.cnblogs.com/zxh1210603696/p/4157294.html]
+\item  \goto[Python单例模式的4种实现方法][http://blog.csdn.net/ghostfromheaven/article/details/7671853]
+\stopitemize

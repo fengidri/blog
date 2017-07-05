@@ -1,0 +1,60 @@
+<p></p>
+
+<h3>内核模块加载</h3>
+<p>systemTap 的探测的层次是到达了内核的, 那么一些内核模块, 自然是
+要用到, 那么可能就会出现如:</p>
+
+<p><pre>
+WARNING: Missing unwind data for module, rerun with 'stap -d ext4'
+</pre>
+</p>
+
+<p>解决方法是加上如下参数. 这会让stap 加载所有的内核模块.
+<pre>
+        --all-modules
+</pre>
+</p>
+
+<h3>目标</h3>
+<p>使用systemTap是为了对于一些程序进行分析如nginx. 那么符号的信息自然要
+载入, 而符号信息正是保存在目标文件中的. 如nginx 可执行程序.</p>
+
+<p>使用参数:
+<pre>
+-d nginx
+</pre>
+</p>
+
+<p>另一个问题在于, 只载入nginx是不行的, nginx 会用到其它的库, 这些库文件
+也要进行载入. 如果都使用<b>-d</b>的话, 比较麻烦. 一个方法是使用
+<b>--ldd</b>, 这个选项使用会对于目标使用ldd 命令, 并把目标依赖的库
+文件都载入.</p>
+
+<p>但是如果使用动态的方法进行加载, 那么ldd 就没有用了, 只能使用<b>-d</b></p>
+
+<h3>Array overflow</h3>
+<p>数组的大小被<b>MAXMAPENTRIES</b>限制了. 如果出现下面的问题, 要考虑
+把这个值改大一些.
+<pre>
+ERROR: Array overflow, check MAXMAPENTRIES near identifier 's' at ngx.stp:5:9
+</pre>
+</p>
+
+<p>选项如:
+<pre>
+-D MAXMAPENTRIES=512
+</pre>
+
+也不能太大, 要看机器的情况.</p>
+
+<h3>print_backtrace</h3>
+<p>有时会显示如下的警告:
+<pre>
+WARNING: no or bad debug frame hdr
+WARNING: No binary search table for eh frame, doing slow linear search for stap_e5c52c02adb94154f3f36f2c17e9fe7_17477
+</pre>
+
+这个只在与内核相关的时候出现了. 目前还不清楚是怎么回事.</p>
+
+<h3>probe overhead exceeded threshold</h3>
+<p>脚本的开销太大了，超过正常的负载，可以用STP_NO_OVERLOAD来解除这个限制</p>

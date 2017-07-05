@@ -1,0 +1,174 @@
+body{
+    margin:0;
+    line-height:2.0;
+    letter-spacing:0.5px;
+}
+.mr_baseinfo{
+    text-align: center;
+}
+.mr_name{
+    font-size: 20pt;
+    cursor:pointer;
+}
+.mobile, .email{
+    margin:auto;
+    text-align: center;
+}
+#wrap{
+    background-color: #fafafa;
+    width: 800px;
+    margin:auto;
+    border: 1px solid;
+    padding:2em;
+}
+#print
+{ 
+    top:3em;
+    right:1em;
+    position:fixed;
+    cursor:pointer;
+    width: 40px;
+}
+#index_switch
+{ 
+    top:3em;
+    left:1em;
+    position:fixed;
+    cursor:pointer;
+}
+#index
+{ 
+    top:6em;
+    left:1em;
+    position:fixed;
+    border-width:1px;
+    border-style:solid;
+    background-color:white;
+    padding: 1em 1em 1em 0;
+}
+#index div{
+    margin-top:8px;
+}
+div#h2, div#h3, div#h4, div#h5, div#h6{ 
+    cursor:pointer;
+}
+div#h2:hover, div#h3:hover, div#h4:hover, div#h5:hover, div#h6:hover{ 
+    color:green;
+}
+div#h2{
+    text-indent:0em;
+}
+div#h3{
+    text-indent:1em;
+}
+div#h4{
+    text-indent:2em;
+}
+div#h5{
+    text-indent:3em;
+}
+div#h6{
+    text-indent:4em;
+}
+h3{
+    display: inline-block;
+    color: green;
+    background-color: #eee;
+    padding: 0.3em 1em 0.3em 1em;
+    border-radius: 27px;
+    margin:auto;
+}
+
+.mr_skill_name{
+    width:90px;
+    display:inline-block;
+}
+.mr_skill_con{
+    padding: 0.5em;
+}
+.mr_skill_plan, .mr_skill_plan em{
+    background-color: #eee;
+    width:600px;
+    height: 8px;
+    border-radius: 7px;
+    display:inline-block;
+}
+.mr_skill_plan em{
+    background-color: #00b88d;
+}
+.mr_content_m:before{
+    content: "工作内容:";
+    color:green;
+    margin:1em;
+}
+.mr_content_r{
+    float:right;
+}
+.head{
+    height: 60px;
+    width:866px;
+    /*background: url("../images/stars.png");*/
+    position:relative;
+    left: -2em;
+    top: -2em;
+
+}
+.links{
+    position: relative;
+    text-decoration: none;
+}
+.links em{
+    background: black;
+    border-radius: 7px;
+    color:white;
+    padding: 4px;
+    display: none;
+    position: absolute;
+    top: -3.4em;
+    left: -10px;
+}
+.links:hover em{
+    display: inline-block;
+}
+.desc .more{
+    float: right;
+}
+span.mobile span{
+    background-attachment:fixed;
+    display:inline-block;
+    vertical-align:middle;
+    width: 9px;
+    height: 14px;
+    background: url('../images/icons_mr.png') no-repeat;
+    background-position: -131px -70px;
+    padding: 2px;
+}
+span.email span{
+    background-attachment:fixed;
+    display:inline-block;
+    vertical-align:middle;
+    background: url('../images/icons_mr.png') no-repeat;
+    width: 14px;
+    height: 10px;
+    background-position: -150px -73px;
+    padding: 2px;
+}
+#workExperience, #educationalBackground, #projectExperience,#selfDescription,
+#selfDescription, #skillsAssess, #sub_wrap{
+    border: 1px solid;
+    margin-bottom: 2em;
+    padding:1em 2em 2em 1em;
+}
+
+#hardpoint{
+    width: 90%;
+    display: block;
+    margin: auto;
+    padding: 5px;
+}
+#pic{
+    width: 150px;
+    float: left;
+    margin-right: 2em;
+}
+

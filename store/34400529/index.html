@@ -1,0 +1,39 @@
+<p>
+<pre>
+from matplotlib import pylab as pl
+
+from matplotlib.ticker import MultipleLocator, FuncFormatter
+
+def x_format(x, pos):
+    return time.strftime('%d.%H:%M', time.localtime(x))
+
+
+
+# set data
+x = range(0, len(data))
+x = date
+y = data
+
+pl.figure(figsize=(20,8))
+
+ax1 = pl.subplot(2, 1, 2)
+ax2 = pl.subplot(2, 1, 1, sharex=ax1)
+ax1.plot(x, y, 'g')
+#ax.figure(figsize=(20,8))
+
+ax2.plot(x, requests, 'g')
+
+pl.setp(ax1.get_xticklabels(), fontsize=12)
+pl.setp(ax2.get_xticklabels(), visible=False)
+
+#ax=pl.gca()
+ax1.xaxis.set_major_formatter(FuncFormatter(x_format))
+ax2.xaxis.set_major_formatter(FuncFormatter(x_format))
+
+# make plot labels
+ax1.set_xlabel("Time")
+ax1.set_ylabel("Error Rate")
+ax2.set_ylabel("Requests")
+pl.savefig('/tmp/share/xx.png')
+</pre>
+</p>

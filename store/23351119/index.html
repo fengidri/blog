@@ -1,0 +1,59 @@
+<p></p>
+
+<h3>Changing initcwnd</h3>
+<p>check route settings.
+<pre>
+sajal@sajal-desktop:~$ ip route show
+192.168.1.0/24 dev eth0  proto kernel  scope link  src 192.168.1.100  metric 1
+169.254.0.0/16 dev eth0  scope link  metric 1000
+default via 192.168.1.1 dev eth0  proto static
+sajal@sajal-desktop:~$
+</pre>
+
+<pre>
+sajal@sajal-desktop:~$ sudo ip route change default via 192.168.1.1 dev eth0  proto static initcwnd 10
+</pre>
+</p>
+
+<p><pre>
+sudo ip route change default via 192.168.1.1 dev eth0  proto static initrwnd 10
+</pre>
+</p>
+
+<h3>rwnd 计算</h3>
+<p>有很多人都遇到过网络传输速度过慢的问题，比如说明明是百兆网络，
+其最大传输数据的理论值怎么着也得有个十兆，但是实际情况却相距甚远，可能只有一兆。
+此类问题如果剔除奸商因素，多半是由于接收窗口「rwnd」设置不合理造成的。</p>
+
+<p>实际上接收窗口「rwnd」的合理值取决于BDP的大小，也就是带宽和延迟的乘积。
+假设带宽是 100Mbps，延迟是 100ms，那么计算过程如下：</p>
+
+<p><pre>
+BDP = 100Mbps * 100ms = (100 / 8) * (100 / 1000) = 1.25MB
+</pre>
+
+此问题下如果想最大限度提升吞度量，接收窗口「rwnd」的大小不应小于 1.25MB。</p>
+
+<p>延迟的测试方法，BDP中的延迟指的就是RTT，通常使用ping命令很容易就能得到它，
+但是如果 ICMP 被屏蔽，ping也就没用了，此时可以试试 synack。</p>
+
+<p>实际上这里还有一个细节问题是：缓冲里除了保存着传输的数据本身，
+还要预留一部分空间用来保存TCP连接本身相关的信息，换句话说，
+并不是所有空间都会被用来保存数据，相应额外开销的具体计算方法如下：</p>
+
+<p><pre>
+Buffer / 2^tcp_adv_win_scale
+</pre>
+</p>
+
+<p>依照Linux内核版本的不同，net.ipv4.tcp_adv_win_scale 的值可能是 1 或者 2，如果为 1 的话，
+则表示二分之一的缓冲被用来做额外开销，如果为 2 的话，则表示四分之一的缓冲被用来做额外开销。
+按照这个逻辑，缓冲最终的合理值的具体计算方法如下：</p>
+
+<p><pre>
+BDP / (1 – 1 / 2^tcp_adv_win_scale)
+</pre>
+</p>
+
+<h3>参考</h3>
+<p>&nbsp;<a href=http://www.cdnplanet.com/blog/tune-tcp-initcwnd-for-optimum-performance/ >http://www.cdnplanet.com/blog/tune-tcp-initcwnd-for-optimum-performance/</a>&nbsp;&nbsp;<a href=http://packetlife.net/blog/2010/aug/4/tcp-windows-and-window-scaling/ >TCP Windows and Window Scaling</a>&nbsp;&nbsp;<a href=http://huoding.com/2013/11/21/299 >浅谈TCP优化</a>&nbsp;</p>

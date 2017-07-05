@@ -1,0 +1,177 @@
+<p></p>
+
+<p>经常发现 net.ipv4.tcp_wmem 没有作用. 这个参数的修改一般, 都看不出效果.
+感觉很奇怪, 文档上写的很明白. 但是就是不启效果.</p>
+
+<p>今天, 看代码的时候, 突然想到, accept 的 socket 的 sndbuf 是不是继承自 listen socket.
+之前发现过这一特点. 新的 socket 有一些是继承自 listen socket 的.</p>
+
+<h3>实验</h3>
+<p></p>
+
+<h4>systemtap</h4>
+<p><pre>
+probe kernel.function("tcp_sendmsg")
+{
+    if (execname() == "test")
+        printf("%s sk_sndbuf: %d \n", execname(), $sk-&gt;sk_sndbuf);
+}
+</pre>
+</p>
+
+<h4>server code</h4>
+<p><pre>
+/**
+ *   author       :   丁雪峰
+ *   time         :   2016-08-31 09:37:57
+ *   email        :   fengidri@yeah.net
+ *   version      :   1.0.1
+ *   description  :
+ */
+#include &lt;stdio.h&gt;
+#include &lt;stddef.h&gt;
+#include &lt;unistd.h&gt;
+#include &lt;string.h&gt;
+#include &lt;errno.h&gt;
+#include &lt;sys/types.h&gt;
+#include &lt;malloc.h&gt;
+#include "sws.h"
+
+int main()
+{
+    int  s = sws_net_server("127.0.0.1", 9999, 0, 1);
+    if (s &lt; 0)
+    {
+        printf("sws_net_server fail\n");
+        return -1;
+    }
+
+    while (1)
+    {
+        int fd = accept(s, NULL, 0);
+        if (fd &lt; 0)
+        {
+            printf("accept err\n");
+            continue;
+        }
+        sws_net_noblock(fd, 1);
+
+        int size = 1024 * 1024 * 20;
+        char *buf = malloc(size);
+
+
+        int n = write(fd, buf, size);
+        printf("write: %d\n", n);
+        close(fd);
+    }
+}
+</pre>
+</p>
+
+<p>compile:
+<pre>
+gcc test.c -L ../sws -I ../sws -lsws -g -o test
+</pre>
+</p>
+
+<p>sws 是我的一个简单的代码库.</p>
+
+<h4>操作</h4>
+<p><pre>
+nc 127.0.0.1 9999 &gt; /dev/null -v
+</pre>
+</p>
+
+<p>反复操作上面的命令, stap 会打印出在 tcp_sendmsg 的下的 sk_sndbuf, server 的代码会打印出成功写入到 socket 的
+数据的大小. 可以看到两者的大小是相对应.</p>
+
+<p>但是这个时候, 如果调整了 net.ipv4.tcp_wmem, stap 的输出值并不会变化.</p>
+
+<p>但是重启 test 程序, stap 的输出值就是新的调整的值了.</p>
+
+<p>这就可以证明前面的猜测了.</p>
+
+<h3>kernel code</h3>
+<p>如下的代码是, accept api 对应的内核代码, 创建新的 socket 的时候, 会调用 sctp_copy_sock.
+这个函数里会把 sk_sndbuf, sk_rcvbuf
+之类的值都复制到新的 socket.</p>
+
+<p><pre>
+/* Create and initialize a new sk for the socket returned by accept(). */
+static struct sock *sctp_v4_create_accept_sk(struct sock *sk,
+					     struct sctp_association *asoc)
+{
+	struct sock *newsk = sk_alloc(sock_net(sk), PF_INET, GFP_KERNEL,
+			sk-&gt;sk_prot);
+	struct inet_sock *newinet;
+
+	if (!newsk)
+		goto out;
+
+	sock_init_data(NULL, newsk);
+
+	sctp_copy_sock(newsk, sk, asoc);
+	sock_reset_flag(newsk, SOCK_ZAPPED);
+
+	newinet = inet_sk(newsk);
+
+	newinet-&gt;inet_daddr = asoc-&gt;peer.primary_addr.v4.sin_addr.s_addr;
+
+	sk_refcnt_debug_inc(newsk);
+
+	if (newsk-&gt;sk_prot-&gt;init(newsk)) {
+		sk_common_release(newsk);
+		newsk = NULL;
+	}
+
+out:
+	return newsk;
+}
+</pre>
+</p>
+
+<p><pre>
+void sctp_copy_sock(struct sock *newsk, struct sock *sk,
+		    struct sctp_association *asoc)
+{
+	struct inet_sock *inet = inet_sk(sk);
+	struct inet_sock *newinet;
+
+	newsk-&gt;sk_type = sk-&gt;sk_type;
+	newsk-&gt;sk_bound_dev_if = sk-&gt;sk_bound_dev_if;
+	newsk-&gt;sk_flags = sk-&gt;sk_flags;
+	newsk-&gt;sk_no_check_tx = sk-&gt;sk_no_check_tx;
+	newsk-&gt;sk_no_check_rx = sk-&gt;sk_no_check_rx;
+	newsk-&gt;sk_reuse = sk-&gt;sk_reuse;
+
+	newsk-&gt;sk_shutdown = sk-&gt;sk_shutdown;
+	newsk-&gt;sk_destruct = sctp_destruct_sock;
+	newsk-&gt;sk_family = sk-&gt;sk_family;
+	newsk-&gt;sk_protocol = IPPROTO_SCTP;
+	newsk-&gt;sk_backlog_rcv = sk-&gt;sk_prot-&gt;backlog_rcv;
+	newsk-&gt;sk_sndbuf = sk-&gt;sk_sndbuf;
+	newsk-&gt;sk_rcvbuf = sk-&gt;sk_rcvbuf;
+	newsk-&gt;sk_lingertime = sk-&gt;sk_lingertime;
+	newsk-&gt;sk_rcvtimeo = sk-&gt;sk_rcvtimeo;
+	newsk-&gt;sk_sndtimeo = sk-&gt;sk_sndtimeo;
+
+	newinet = inet_sk(newsk);
+
+	/* Initialize sk's sport, dport, rcv_saddr and daddr for
+	 * getsockname() and getpeername()
+	 */
+	newinet-&gt;inet_sport = inet-&gt;inet_sport;
+	newinet-&gt;inet_saddr = inet-&gt;inet_saddr;
+	newinet-&gt;inet_rcv_saddr = inet-&gt;inet_rcv_saddr;
+	newinet-&gt;inet_dport = htons(asoc-&gt;peer.port);
+	newinet-&gt;pmtudisc = inet-&gt;pmtudisc;
+	newinet-&gt;inet_id = asoc-&gt;next_tsn ^ jiffies;
+
+	newinet-&gt;uc_ttl = inet-&gt;uc_ttl;
+	newinet-&gt;mc_loop = 1;
+	newinet-&gt;mc_ttl = 1;
+	newinet-&gt;mc_index = 0;
+	newinet-&gt;mc_list = NULL;
+}
+</pre>
+</p>

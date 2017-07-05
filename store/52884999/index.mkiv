@@ -1,0 +1,30 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Title: arp
+%Class:
+%Post:1
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{arp_ignore}
+定义了在响应收到的 ARP 请求时候的不同的工作
+用于处理多个本地 IP 的情况
+
+\startitemize
+\item 0. (默认): 只要请求的 IP 已经配置在本机的任何一个网卡上, 都可以进行 ARP 响应.
+\item 1. 只有当被请求的 IP 是被配置在请求进来的网卡上的时候才进行回复.
+\item 2.  只有当被请求的 IP 是被配置在请求进来的网卡上, 并且请求的 IP 是处于进来的这个
+网卡的子段内.
+\item 3. 不对被配置成了 host 域的 IP 进行 ARP 回复, 只对于 global/link 域 IP 进行回复.
+\item 4-7. reserved
+\item 8. 不对于请求任何本地 IP 的 ARP 进行响应.
+\stopitemize
+
+\section{arp_announce}
+定义不同的限制级别, 用于指定在网卡上发出 ARP 请求的时候指定在 IP 包中的本地的源 IP.
+\startitemize
+\item 0: 使用任何配置在任一网卡上的 IP
+\item 1: 避开使用网卡不是目的 IP 同一个子网的 IP.
+\stopitemize
+
+
+
+\goto{http://blog.chinaunix.net/uid-13423994-id-5146098.html}

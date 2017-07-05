@@ -1,0 +1,98 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Title: netfilter 的钩子注册
+%Class: kernel
+%Post:1
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+
+
+
+\section{nf_hook_ops}
+
+\starttyping
+struct nf_hook_ops {
+	struct list_head list;
+
+	/* User fills in from here down. */
+	nf_hookfn	*hook;    // 钩子函数指针
+	struct module	*owner;
+	void		*priv;
+	u_int8_t	pf; // 协议簇
+	unsigned int	hooknum;  // 钩子的类型
+	/* Hooks are ordered in ascending priority. */
+	int		priority;  // 优先级
+};
+\stoptyping
+
+list成员用于维护Netfilter hook的列表。
+hook成员是一个指向nf_hookfn类型的函数的指针，
+该函数是这个hook被调用时执行的函数。
+
+pf这个成员用于指定协议族。有效的协议族在linux/socket.h中列出，但对于IPv4我们使用协议族PF_INET。
+\subsection{nf_hookfn}
+nf_hookfn同样在linux/netfilter.h中定义。  内核的版本是:  3.18.7-1
+\starttyping
+typedef unsigned int nf_hookfn(const struct nf_hook_ops *ops,
+			       struct sk_buff *skb,
+			       const struct net_device *in,
+			       const struct net_device *out,
+			       int (*okfn)(struct sk_buff *));
+\stoptyping
+这个函数有一些变化, 在早期的版本如: 2.6.32.65 中可以看到这个函数的定义如下:
+\starttyping
+typedef unsigned int nf_hookfn(unsigned int hooknum,
+			       struct sk_buff *skb,
+			       const struct net_device *in,
+			       const struct net_device *out,
+			       int (*okfn)(struct sk_buff *));
+\stoptyping
+可以看到第一个参数发生了变化.  之前的参数是当前的回调在注册使用 nf_hook_ops 数组的下标.
+而新的直接传入对应的nf_hook_ops 元素的指针. 感觉这样, 更加直接一些了.
+
+更早一些的版本是这样的了
+\starttyping
+typedef unsigned int nf_hookfn(unsigned int hooknum,
+                                struct sk_buff **skb,
+                                const struct net_device *in,
+                                const struct net_device *out,
+                                int (*okfn)(struct sk_buff *));
+\stoptyping
+skb是一个二级指针呢.
+
+\subsection{hooknum}
+hooknum这个成员用于指定安装的这个函数对应的具体的hook类型:
+\startitemize
+\item        NF_IP_PRE_ROUTING    在完整性校验之后，选路确定之前
+\item        NF_IP_LOCAL_IN        在选路确定之后，且数据包的目的是本地主机
+\item        NF_IP_FORWARD        目的地是其它主机地数据包
+\item        NF_IP_LOCAL_OUT        来自本机进程的数据包在其离开本地主机的过程中
+\item        NF_IP_POST_ROUTING    在数据包离开本地主机“上线”之前
+\stopitemize
+
+而这些宏只在早期的2.6.25 之前的版本可以在内核中使用. 这之后这些宏只能用于用户态.
+应该使用如下的enum:
+\starttyping
+enum nf_inet_hooks {
+	NF_INET_PRE_ROUTING,
+	NF_INET_LOCAL_IN,
+	NF_INET_FORWARD,
+	NF_INET_LOCAL_OUT,
+	NF_INET_POST_ROUTING,
+	NF_INET_NUMHOOKS
+};
+\stoptyping
+
+
+\section{注册函数}
+\starttyping
+int nf_register_hook(struct nf_hook_ops *reg);
+void nf_unregister_hook(struct nf_hook_ops *reg);
+int nf_register_hooks(struct nf_hook_ops *reg, unsigned int n);
+void nf_unregister_hooks(struct nf_hook_ops *reg, unsigned int n);
+\stoptyping
+有四个函数完成注册与注销的动作.
+
+\goto{http://staff.ustc.edu.cn/~james/linux/netfilter-4.html}{http://staff.ustc.edu.cn/~james/linux/netfilter-4.html}
+\goto{Linux Cross Reference}{http://lxr.free-electrons.com/ident}

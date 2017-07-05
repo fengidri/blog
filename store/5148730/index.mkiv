@@ -1,0 +1,152 @@
+%title: nginx连接与事件
+%class: nginx
+\section{基本网络模型}
+无论使用怎样的网络模型, 基本的socket 模型并没有根本性的区别.
+这里为了理解nginx 相对比较复杂的网络模型的实现. 再次回顾一下基本的socket 模型.
+
+服务器上首先要通过bind 对于一个地址进行绑定. 这个叫做监听(listen).
+nginx 是在初始化的时候完成这个过程的.
+
+之后对于listen的地址进行监听, 直到有新的连接请求. 服务器上的操作是accept. 这个时候会得一个新的
+句柄. 这个过程中创建了一个连接.
+可以在这个连接上接收或发送数据.
+
+多路复用模型的关键在于对于socket 的状态的监听是通过一个接口完成的, 也可以说是一次监听多个句柄.
+所以新创建的连接也会与listen 句柄一起被监听.
+
+另一个细节的问题在于, 同时被监听, 但是在监听完成之后, 对于不同的句柄的处理方法是不同的.
+
+所以不论具体的实现方法, 一般网络模型中是这样的流程:
+\startitemize
+\item  创建listen
+\item  把listen 加入到多路复用的接口中
+\item  listen 句柄的回调处理. 这个处理中一般就是接受, 并创建连接. 之后把新的连接也放到多路复用的接口中
+\item  新的数据到达, 依赖于绑定的接口方法进行回调处理.
+\stopitemize
+
+
+
+\section{多路复用模型的封装}
+现在想实现一个高性能的服务器这基本是必然的选择了.
+
+在系统层面上这多路利用模型是有很多个的, 不同的平台上的实现也是有区别的.
+这必然是一个问题.
+
+面对接口的问题, 自然要对于这些接口进行封装. 这是面向接口编程. 这样的设计
+也有其好处可以方便在多种底层实现之间进行切换. 这正是nginx的一个优点, 可以
+在不同的平台上都以高效的方式运行.
+
+nginx使用一个结构体来完成这种封装.
+\starttyping
+typedef struct {
+    ngx_int_t  (*add)(ngx_event_t *ev, ngx_int_t event, ngx_uint_t flags);
+    ngx_int_t  (*del)(ngx_event_t *ev, ngx_int_t event, ngx_uint_t flags);
+
+    ngx_int_t  (*enable)(ngx_event_t *ev, ngx_int_t event, ngx_uint_t flags);
+    ngx_int_t  (*disable)(ngx_event_t *ev, ngx_int_t event, ngx_uint_t flags);
+
+    ngx_int_t  (*add_conn)(ngx_connection_t *c);
+    ngx_int_t  (*del_conn)(ngx_connection_t *c, ngx_uint_t flags);
+
+    ngx_int_t  (*process_changes)(ngx_cycle_t *cycle, ngx_uint_t nowait);
+    ngx_int_t  (*process_events)(ngx_cycle_t *cycle, ngx_msec_t timer,
+                   ngx_uint_t flags);
+
+    ngx_int_t  (*init)(ngx_cycle_t *cycle, ngx_msec_t timer);
+    void       (*done)(ngx_cycle_t *cycle);
+} ngx_event_actions_t;
+\stoptyping
+
+\section{事件模型的初始化}
+nginx的设计上是由多个模块组织成的.
+
+对于事件进行初始化这种工作也不例外.
+
+不同于redis 中相对简单的处理方法. 在这里的处理方法相对而言要复杂一些.
+在全部的代码里NGX_EVENT_MODULE类型的模块有两种.
+
+我们先说说这里有为什么要分成两种, 或者说为什么会有这么多事件模块呢?
+
+这是因为有多种底层的实现. 在源代码里组织的时候, 每一种接口是一个模块如:
+aio, devpoll, epoll, eventport, kqueue, poll, rtsig, select, win32_select.
+在编译config的时候, nginx 会 判断使用哪一个 模块并把它加入到数组ngx_modules中去.
+
+这些是底层的模块.
+
+另一类模块ngx_event_core_module用于完成事件接口的初始化, 调用, 管理工作. 这些工作是高于各个不同的底层接口的, 所以有必要把这些
+内容提取出来形成一个独立的模块. 这个模块在工作的时候调用底层模块提供的统一的接口完成工作.
+
+\subsection{ngx_events_block}
+这是'events' 指令的回调函数也是事件模块的初始化入口.
+
+函数的结构并不复杂. 主要是的修改是完成了模块的变量ctx_index的赋值.
+与各个模块的配置的解析.
+
+这个函数是高于各个模块的, 处理的是所有模块中通用性的内容. 所以与详细的操作相关的
+内容并没有在这里面出现.
+
+是通过各个模块所拥有的初始化回调来实现的.
+在events/ngx_event.c文件中有:
+\starttyping
+ngx_module_t  ngx_event_core_module = {
+    NGX_MODULE_V1,
+    &ngx_event_core_module_ctx,            /* module context */
+    ngx_event_core_commands,               /* module directives */
+    NGX_EVENT_MODULE,                      /* module type */
+    NULL,                                  /* init master */
+    ngx_event_module_init,                 /* init module */
+    ngx_event_process_init,                /* init process */
+    NULL,                                  /* init thread */
+    NULL,                                  /* exit thread */
+    NULL,                                  /* exit process */
+    NULL,                                  /* exit master */
+    NGX_MODULE_V1_PADDING
+};
+\stoptyping
+这里的ngx_event_module_init, ngx_event_process_init 才是完成具体的初始化的
+函数.
+
+\subsection{ngx_event_module_init}
+这个函数的调用时机是配置文件的分析结束之后. 主要完成共享内存的数据的初始化工作.
+
+\subsection{ngx_event_process_init}
+\startitemize
+\item  完成初始化的调用如epoll_init.
+\item  完成连接池的创建
+\item 对于监听socket的连接层的初始化.
+\stopitemize
+
+
+\section{事件与定时器}
+这部分是事件处理的核心部分.
+\starttyping
+ngx_single_process_cycle{
+    ngx_process_events_and_timers{
+            使用ngx_accept_disable 做一个简单的均衡.
+            在可以的情况下试图取得锁, 如果得到了锁, 把要监听的
+            句柄加入到接口中去.
+            ngx_process_events{
+                调用select, epoll_wait 之类的接口对于句柄进行监听.
+                并处理回调.
+            }
+    }
+}
+\stoptyping
+
+\section{socket 的封装}
+socket是连接的基础单元.
+在nginx中每个socket都会被封装成一个连接结构，
+就是ngx_connection_t类型。
+每个ngx_connection_t结构具有读写事件read和write，
+它们是ngx_event_t类型的，每一个ngx_event_t有一个handler回调函数指针，
+在发生读写事件时被调用。
+
+这两个结构体都比较复杂, 还有考虑到多个种平台上的实现以及一个nginx的
+多种应用的场景.
+
+
+
+
+
+\section{参考}
+\goto{nginx源码分析（4）——事件模型}{http://blog.csdn.net/chosen0ne/article/details/7741482}

@@ -1,0 +1,75 @@
+<p></p>
+
+<h3>HTTP/2 支持</h3>
+<p>
+    <ul>
+
+        <li>*) [TS-3530] HTTP/2 memory leak with headers and more...
+
+        <li>*) [TS-3519] HTTP/2 seeing a lot of GOAWAY frames being sent
+
+        <li>*) [TS-3513] HTTP/2 core dump. Fixed problem with cursor not advancing during parsing
+
+        <li>*) [TS-3475] Add a few records.config options for controlling the HTTP/2 SETTINGS. Thanks to Masakazu for all the reviews and additions.
+
+        <li>*) [TS-3479] Remove verbose Warning() from HTTP/2 connections.
+
+        <li>*) [TS-3413] High CPU utiliziation when processing HTTP/2 traffic.
+
+        <li>*) [TS-3405] Memory use after free in HTTP/2.
+
+        <li>*) [TS-3152] stop offerring HTTP/2 over TLS by default.
+
+        <li>*) [TS-3415] Http/2 sending FIN stream too early.
+
+        <li>*) [TS-3697] Fix frame type check for http/2.
+    </ul></p>
+
+<h3>http 协议行为</h3>
+<p>
+    <ul>
+
+        <li>*) [TS-2419] Don't close client connection when responding with a 204 and
+ there is no body.
+
+        <li>*) [TS-312] Add option to always share keep-alive connections to the origin
+ server.
+    </ul></p>
+
+<h3>SSL</h3>
+<p>
+    <ul>
+
+        <li>*) [TS-3243] Removing warnings from loading certificates with duplicated names.
+
+        <li>*) [TS-1146] Add RFC 5077 TLS session ticket support. Author: Wei Sun <sunwei@yahoo-inc.com>
+    </ul></p>
+
+<h3>aio</h3>
+<p>
+    <ul>
+
+        <li>*) [TS-2138] Fix the bug that restarting ats cause cache data loss if
+ enable the native-aio.
+    </ul></p>
+
+<h3>cache</h3>
+<p>
+    <ul>
+
+        <li>*) [TS-2008] Cache control with multiple suffixes. Author: bettydramit <b13621367396@gmail.com>
+    </ul></p>
+
+<h3>memory leak</h3>
+<p>
+    <ul>
+
+        <li>*) [TS-2276] manager memory leak in some case. Author: Yu Qing
+    </ul></p>
+
+<h3>other</h3>
+<p>
+    <ul>
+
+        <li>*) [TS-2235] url_print should NOT output "?" for empty query string. Author: Yu Qing
+    </ul></p>

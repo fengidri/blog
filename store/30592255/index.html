@@ -1,0 +1,42 @@
+<p>
+tcp connect timeout 是在三次握手的过程中的超时, 但是我们好像并不能通过 socket 实现.
+一个方法是通过 iptables 对于底层的形为进行控制, 还有一些工具如: netem.</p>
+
+<p>下面使用 iptables 进行模拟.
+<pre>
+iptables -A OUTPUT -p tcp -m tcp --tcp-flags SYN SYN --sport 9090 -j DROP
+</pre>
+</p>
+
+<p>在这个命令的解释如下:
+
+    <ul>
+
+        <li>-A OUTPUT 指定为输出行为.
+
+        <li>-sport 指定源端口是 9090.
+
+        <li>-p tcp 选定协议是 tcp.
+
+        <li>--tcp-flags 参数指定 tcp 的 SYN 区域是 SYN 值, 也就是 SYN 选项是 1.
+
+        <li>-m tcp 其实也可以没有. 用于指定是 syn 的响应.
+
+        <li>-j 行为是扔掉
+    </ul></p>
+
+<p><pre>
+iptables -A OUTPUT -p tcp -m tcp --tcp-flags PSH PSH --sport 9090 -j DROP
+</pre>
+
+这个会控制信息是可以正常传送的，也就是说握手是正常成功的，然后传输数据的时候，
+我们限制了服务器无法给客户端传送数据内容，这样就模拟了连接是成功的，但是无法正常读取到服务端的数据的超时情况了</p>
+
+<h3>模拟事件</h3>
+<p>为了模拟传输超时事件, 使用 iptables 把客户端返回给服务端的 fin 与 rst 响应给 drop 掉, 这样
+当关闭了 client, 但是 server 收不到 fin 与 rst 会就一直进行重传.
+<pre>
+iptables -A OUTPUT -p tcp --tcp-flags FIN FIN --dport 8100 -j DROP
+iptables -A OUTPUT -p tcp --tcp-flags RST RST --dport 8100 -j DROP
+</pre>
+</p>

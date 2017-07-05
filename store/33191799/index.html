@@ -1,0 +1,37 @@
+<p>
+在本机上是使用是 mac + vagrant(virtubalbox).
+但是一直好像不能从 mac 访问 linux. 今天看了一下,
+我的 linux 有两个网卡, 第一个是使用的 net 第二是使用的网桥.</p>
+
+<p>vagrant 会在开启 linux 的时候使用 sshd 与 mac 做一个反向的代理. 这样可以通过连接
+mac 的一个固定的地址来与 linux 实现 ssh 连接.</p>
+
+<p>这样的话就要使用的到 第一个网卡, sshd 要与mac 先进行反射代理的连接. 这个过程
+使用的是在net 下 mac 会有一个固定的地址, 如果是桥接, 是不行的, 因为不知道
+当前的 mac 的地址.</p>
+
+<p>net 下的 linux 的ip 是10.0.2.15 而 mac 对应是的 10.0.2.2 这个 virtubalbox 固定的.</p>
+
+<p>而我还有一个网桥的网卡, 一般我上网是用的这个, 外面连接进来是希望使用这个的, 但是由于路由的设置有
+问题所以, 会出现问题, 不能正常的响应, 就是可以收到请求但是出动的时候, 却是使用的 第一个网卡.
+错误的路由是这样的:
+<pre>
+Kernel IP routing table
+Destination     Gateway         Genmask         Flags Metric Ref    Use Iface
+default         gateway         0.0.0.0         UG    202    0        0 enp0s3
+default         gateway         0.0.0.0         UG    203    0        0 enp0s8
+10.0.0.0        *               255.255.240.0   U     203    0        0 enp0s8
+10.0.2.0        *               255.255.255.0   U     202    0        0 enp0s3
+</pre>
+</p>
+
+<p>其实是由于公司的内网也是 10.0.2.* 造成的问题.
+改成如下:
+<pre>
+Kernel IP routing table
+Destination     Gateway         Genmask         Flags Metric Ref    Use Iface
+0.0.0.0         10.0.0.130      0.0.0.0         UG    203    0        0 enp0s8
+10.0.0.0        0.0.0.0         255.255.240.0   U     203    0        0 enp0s8
+10.0.2.2        0.0.0.0         255.255.255.255 UH    0      0        0 enp0s3
+</pre>
+</p>

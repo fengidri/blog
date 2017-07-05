@@ -1,0 +1,29 @@
+<p>一些源站对于相同的 URL 请求可能会返回不同的对象.
+这些资源的内容是很广泛的, 可能根据不同的语言,
+不现的呈现方式的浏览器, 或显示不同的文件格式如
+(HTML, XML);
+同一资源的不同的备份, 由<b>Vary</b>头进行区分, 并被
+Traffic Server缓存. 你也可以指定Traffic Server通过<b>Content-Type</b>来区分同一资源的不同的备份并缓存它们.
+你也可以限制缓存中的同一个资源的不同的备份的总数.</p>
+
+<p><pre>
+proxy.config.http.cache.enable_default_vary_headers
+proxy.config.http.cache.vary_default_text
+proxy.config.http.cache.vary_default_images
+proxy.config.http.cache.vary_default_other
+</pre>
+</p>
+
+<p><b>注意:</b>如果你把 <b>Cookie</b>增加
+到vary, 要保证设置了如下变量:
+ proxy.config.http.cache.cache_responses_to_cookies.</p>
+
+<p> 你可以限制备份的数量. 大的备份数会影响Traffic Server的性能.
+ 因为所有的备份都有相同的 URL. Traffic Server可以快速
+ 对于URL 进行查找, 但是它必须在存储中顺序查找比较多个备份.</p>
+
+<p> 配置:
+<pre>
+CONFIG proxy.config.cache.limits.http.max_alts INT 5
+</pre>
+</p>

@@ -1,0 +1,86 @@
+
+
+
+
+<h3>模块化</h3>
+<p>模块化的好处我就不多说了. nginx 由nginx core 与一系列的功能模块组成.各个功能模块完成一个独立的功能, 通过注册的方式被挂到对应的位置上.核心的功能实现如http, mail会在适当的时机调用.</p><p>各个模块在初始化的时候, 会在对应的时机调用模块的初始化功能.</p><p>但是一个模块在有高的独立性的同时, 如何把多个独立的模块组织起来就是我们在享用了模块独立性所必须付出的代价了. 所以core 必须提供一种统一的机制来实现对于模块的调用加载. 而模块也必须按照这个机制提供必要的信息. 那么单独从模块的角度来说, 就是要通过统一的方法对于模块自身的信息进行说明与描述.</p><p>
+
+<h3>模块的注册</h3>
+<p>这个行为的意义在于让上层的代码知道都有哪些模块.nginx 使用 nginx_modules这个全局的变量来记录所有的模块. 并且这个变量是根据编译的参数自动生成的.</p><p>
+
+<h3>模块分类</h3>
+<p>先来看看模块可以分成几类.</p>
+<ul>
+<li><b>event module:</b>&nbsp;&nbsp;&nbsp;&nbsp;搭建了独立于操作系统的事件处理机制的框架，及提供了各具体事件的处理。 包括ngx_events_module， ngx_event_core_module和ngx_epoll_module等。 nginx具体使用何种事件处理模块，这依赖于具体的操作系统和编译选项。</li>
+<li><b>phase handler:</b>&nbsp;&nbsp;&nbsp;&nbsp;此类型的模块也被直接称为handler模块。 主要负责处理客户端请求并产生待响应内容，比如ngx_http_static_module模块， 负责客户端的静态页面请求处理并将对应的磁盘文件准备为响应内容输出。</li>
+<li><b>output filter:</b>&nbsp;&nbsp;&nbsp;&nbsp;也称为filter模块，主要是负责对输出的内容进行处理，可以对输出进行修改。 例如，可以实现对输出的所有html页面增加预定义的footbar一类的工作， 或者对输出的图片的URL进行替换之类的工作。</li>
+<li><b>upstream:</b>&nbsp;&nbsp;&nbsp;&nbsp;upstream模块实现反向代理的功能，将真正的请求转发到后端服务器上，并从后端服务器上读取响应， 发回客户端。upstream模块是一种特殊的handler，只不过响应内容不是真正由自己产生的，而是从后端服务器上读取的。</li>
+<li><b>load-balancer:</b>&nbsp;&nbsp;&nbsp;&nbsp;负载均衡模块，实现特定的算法，在众多的后端服务器中， 选择一个服务器出来作为某个请求的转发服务器。</li>
+</ul>
+<p>
+
+
+<h3>ngx_module_s</h3>
+<p>这个结构是模块化中的一个核心的数据结构. 是各个模块完成自述中最重要的结构体.所以还是有必要看看这个结构体中比较重要的几个内容:<pre>struct ngx_module_s {
+    ngx_uint_t            ctx_index;
+    ngx_uint_t            index;
+    ...
+    ngx_uint_t            major_version;
+    ngx_uint_t            minor_version;
+    void                 *ctx;
+    ngx_command_t        *commands;
+    ngx_uint_t            type;
+    ...
+};
+</pre>
+<p>对于我们要理解模块的组织结构而言着重要了解这些内容.</p><p>下面解释这些成员:</p>
+<ul>
+<li><b>type:</b>&nbsp;&nbsp;&nbsp;&nbsp;表明这前是哪种类型的模块. 前面说过可以分成5类模块的.</li>
+<li><b>ctx:</b>&nbsp;&nbsp;&nbsp;&nbsp;指向模块私有的一些数据. 这里有一个重点就是所有相同类型的模块对于这个私有数据的组织是相同的. 也是是说如果两个模块的类型相同, 那么这个ctx 的数据结构也是相同的. </p><p>也就是说这个ctx 并不是给第一个单独的模块进行私有的, 而是给统领同一类模块的上层的代码私有的.另一个现象是实际在ctx中保存的是一系统的回调函数. 用于在适当的时机地行初始化用的.</p><p></li>
+<li><b>ctx_index:</b>&nbsp;&nbsp;&nbsp;&nbsp;在同类的模块中的index</li>
+<li><b>index:</b>&nbsp;&nbsp;&nbsp;&nbsp;在所有的模块中的index.</li>
+<li><b>commands:</b>&nbsp;&nbsp;&nbsp;&nbsp;记录本模块提供的指令.</li>
+</ul>
+<p>
+</p><p>
+
+<h3>处理handler</h3>
+<p>模块只是一个组织的形式, 本质上来说对于处理流程有实际作用是的模块中提代的一些函数. 这些函数提供了一些实际的处理代码. 前面所说的模块的组织方式的根本目的是可以使用这些处理函数.</p><p>对于这些处理函数的调用有两种方式:一种方式就是按处理阶段挂载;另外一种挂载方式就是按需挂载。
+
+<h4>按处理阶段挂载</h4>
+<p>为了更精细地控制对于客户端请求的处理过程，nginx把这个处理过程划分成了11个阶段. 但是四个过程中是不会调用处理函数的, 所以其实真正是有7个phase你可以去挂载handler。下面看一下挂载的代码:</p><p><pre>static ngx_int_t
+ngx_http_hello_init(ngx_conf_t *cf)
+{
+        ngx_http_handler_pt        *h;
+        ngx_http_core_main_conf_t  *cmcf;
+
+        cmcf = ngx_http_conf_get_module_main_conf(cf, ngx_http_core_module);
+
+        h = ngx_array_push(&amp;cmcf-&gt;phases[NGX_HTTP_CONTENT_PHASE].handlers);
+        if (h == NULL) {
+                return NGX_ERROR;
+        }
+
+        *h = ngx_http_hello_handler;
+
+        return NGX_OK;
+}
+</pre>
+<p>可以发现比较不同的做法, 一般的思路是把函数指针做为参数传入上层的接口中, 但是这里的做法是返回一个指针, 之后对于指针的位置进行赋值. 这样做的好处在哪里呢?TODO</p><p>
+
+<h4>按需挂载</h4>
+<p>以这种方式挂载的handler也被称为 content handler。</p><p>当一个请求进来以后，nginx从NGX_HTTP_POST_READ_PHASE阶段开始依次执行每个阶段中所有handler。执行到 NGX_HTTP_CONTENT_PHASE阶段的时候，如果这个location有一个对应的content handler模块，那么就去执行这个content handler模块真正的处理函数。否则继续依次执行NGX_HTTP_CONTENT_PHASE阶段中所有content phase handlers，直到某个函数处理返回NGX_OK或者NGX_ERROR。</p><p>换句话说，当某个location处理到NGX_HTTP_CONTENT_PHASE阶段时，如果有content handler模块，那么NGX_HTTP_CONTENT_PHASE挂载的所有content phase handlers都不会被执行了。</p><p>但是使用这个方法挂载上去的handler有一个特点是必须在NGX_HTTP_CONTENT_PHASE阶段才能执行到。如果你想自己的handler在更早的阶段执行，那就不要使用这种挂载方式。</p><p>那么在什么情况会使用这种方式来挂载呢？一般情况下，某个模块对某个location进行了处理以后，发现符合自己处理的逻辑，而且也没有必要再调用NGX_HTTP_CONTENT_PHASE阶段的其它handler进行处理的时候，就动态挂载上这个handler。</p><p>下面来看一下使用这种挂载方式的具体例子（摘自Emiller’s Guide To Nginx Module Development）。<pre>static char *
+ngx_http_circle_gif(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
+{
+        ngx_http_core_loc_conf_t  *clcf;
+
+        clcf = ngx_http_conf_get_module_loc_conf(cf, ngx_http_core_module);
+        clcf-&gt;handler = ngx_http_circle_gif_handler;
+
+        return NGX_CONF_OK;
+}
+</pre>
+<p></p><p>
+
+<h3>参考</h3>
+<p>&nbsp;<a href=http://tengine.taobao.org/book/chapter_02.htmlnginx >Nginx开发从入门到精通(nginx的模块化体系结构)</a>&nbsp;

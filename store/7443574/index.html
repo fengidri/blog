@@ -1,0 +1,179 @@
+<p>信号灯与互斥锁和条件变量的主要不同在于”灯”的概念，灯亮则意味着资源可用，灯灭则意味着不可用。
+如果说后两中同步方式侧重于”等待”操作，即资源不可用的话，信号灯机制则侧重于点灯，即告知资源可用；没有等待线程的解锁或激发条件都是没有意义的，
+而没有等待灯亮的线程的点灯操作则有效，且能保持灯亮状态。当然，这样的操作原语也意味着更多的开销。</p>
+
+<p>信号灯的应用除了灯亮/灯灭这种二元灯以外，也可以采用大于1的灯数，以表示资源数大于1，这时可以称之为多元灯。</p>
+
+<p>信号量用在多线程多任务同步的，一个线程完成了某一个动作就通过信号量告诉别的线程，别的线程再进行某些动作（大家都在semtake的时候，就阻塞在哪里）。
+而互斥锁是用在多线程多任务互斥的，一个线程占用了某一个资源，那么别的线程就无法访问，直到这个线程unlock，其他的线程才开始可以利用这个资源。比如对全局变量的访问，有时要加锁，操作完了，在解锁。有的时候锁和信号量会同时使用的”</p>
+
+<p>也就是说，信号量不一定是锁定某一个资源，而是流程上的概念，比如：有A,B两个线程，B线程要等A线程完成某一任务以后再进行自己下面的步骤，
+这个任务并不一定是锁定某一资源，还可以是进行一些计算或者数据处理之类。而线程互斥量则是“锁住某一资源”的概念，在锁定期间内，其他线程无法对被保护的数据进行操作。在有些情况下两者可以互换。</p>
+
+<p>两者之间的区别:</p>
+
+<p>作用域
+
+    <ul>
+
+        <li>信号量: 进程间或线程间(linux仅线程间)
+
+        <li>互斥锁: 线程间
+    </ul></p>
+
+<p>上锁时
+
+    <ul>
+
+        <li>信号量: 只要信号量的value大于0，其他线程就可以sem_wait成功，成功后信号量的value减一。若value值不大于0，则sem_wait阻塞，直到sem_post释放后value值加一
+
+        <li>互斥锁: 只要被锁住，其他任何线程都不可以访问被保护的资源
+    </ul></p>
+
+<h3>信号量</h3>
+<p></p>
+
+<h4>创建和 注销</h4>
+<p>POSIX信号灯标准定义了有名信号灯和无名信号灯两种，但Linux Threads的实现仅有无名灯，
+同时有名灯除了总是可用于多进程之间以外，在使用上与无名灯并没有很大的区别，因此下面仅就无名灯进行讨论。</p>
+
+<p><pre>
+int sem_init(sem_t *sem, int pshared, unsigned int value)
+</pre>
+</p>
+
+<p>这是创建信号灯的API，其中value为信号灯的初值，pshared表示是否为多进程共享而不仅仅是用于一个进程。
+Linux Threads没有实现多进程共享信号灯，因此所有非0值的pshared输入都将使sem_init()返回-1，且置errno为ENOSYS。
+初始化好的信号灯由sem变量表征，用于以下点灯、灭灯操作。
+<pre>
+int sem_destroy(sem_t * sem)
+</pre>
+</p>
+
+<p>被注销的信号灯sem要求已没有线程在等待该信号灯，否则返回-1，且置errno为EBUSY。除此之外，Linux Threads的信号灯 注销函数不做其他动作。</p>
+
+<h4>点灯和灭灯</h4>
+<p><pre>
+int sem_post(sem_t * sem)
+</pre>
+</p>
+
+<p>点灯操作将信号灯值原子地加1，表示增加一个可访问的资源。
+<pre>
+int sem_wait(sem_t * sem)
+int sem_trywait(sem_t * sem)
+</pre>
+</p>
+
+<p>sem_wait()为等待灯亮操作，等待灯亮（信号灯值大于0），然后将信号灯原子地减1，并返回。
+sem_trywait()为sem_wait()的非阻塞版，如果信号灯计数大于0，则原子地减1并返回0，否则立即返回-1，errno置为EAGAIN。</p>
+
+<h4>获取灯值</h4>
+<p><pre>
+int sem_getvalue(sem_t * sem, int * sval)
+</pre>
+</p>
+
+<p>读取sem中的灯计数，存于*sval中，并返回0。</p>
+
+<h4>其他</h4>
+<p>sem_wait()被实现为取消点，而且在支持原子”比较且交换”指令的体系结构上，sem_post()是唯一能用于异步信号处理函数的POSIX异步信号 安全的API。</p>
+
+<h3>条件变量</h3>
+<p>假设有共享的资源sum,与之相关联的mutex 是lock_s.假设每个线程对sum的操作很简单的,
+与sum的状态无关,比如只是sum++.那么只用mutex足够了.程序员只要确保每个线程操作前,取得lock,然后sum++,再unlock即可.每个线程的代码将像这样
+<pre>
+add()
+{
+    pthread_mutex_lock(lock_s);
+    sum++;
+    pthread_mutex_unlock(lock_s);
+}
+</pre>
+</p>
+
+<p>　　如果操作比较复杂,假设线程t0,t1,t2的操作是sum++,而线程t3则是在sum到达100的时候,打印出一条信息,并对sum清零.
+这种情况下,如果只用mutex, 则t3需要一个循环,每个循环里先取得lock_s,然后检查sum的状态,如果sum>=100,则打印并清零,
+然后unlock.如果sum >= 100,则unlock,并sleep()本线程合适的一段时间.</p>
+
+<p>　这个时候,t0,t1,t2的代码不变,t3的代码如下
+<pre>
+print()
+{
+    while (1)
+    {
+        pthread_mutex_lock(lock_s);
+        if(sum&lt;100)
+        {
+            printf(“sum reach 100!”);
+            pthread_mutex_unlock(lock_s);
+        }
+        else
+        {
+            pthread_mutex_unlock(lock_s);
+            my_thread_sleep(100);
+            return OK;
+        }
+    }
+}
+</pre>
+</p>
+
+<p>这种办法有两个问题
+
+    <ul>
+
+        <li>sum在大多数情况下不会到达100,那么对t3的代码来说,大多数情况下,走的是else分支,只是lock和unlock,然后sleep().这浪费了CPU处理时间.
+
+        <li>为了节省CPU处理时间,t3会在探测到sum没到达100的时候sleep()一段时间.这样却又带来另外一个问题,亦即t3响应速度下降.可能在sum到达200的时候,t4才会醒过来.
+
+        <li>这样,程序员在设置sleep()时间的时候陷入两难境地,设置得太短了节省不了资源,太长了又降低响应速度.真是难办啊!
+    </ul></p>
+
+<p>　　这个时候,condition variable内裤外穿,从天而降,拯救了焦头烂额的你.</p>
+
+<p>　　你首先定义一个condition variable.
+<pre>
+pthread_cond_t cond_sum_ready=PTHREAD_COND_INITIALIZER;
+</pre>
+</p>
+
+<p>　　t0,t1,t2的代码只要后面加两行,像这样
+<pre>
+add()
+{
+    pthread_mutex_lock(lock_s);
+    sum++;
+    pthread_mutex_unlock(lock_s);
+    if(sum&gt;=100)
+        pthread_cond_signal(&amp;cond_sum_ready);
+}
+</pre>
+
+而t3的代码则是
+<pre>
+print
+{
+    pthread_mutex_lock(lock_s);
+    while(sum&lt;100)
+        pthread_cond_wait(&amp;cond_sum_ready, &amp;lock_s);
+    printf(“sum is over 100!”);
+    sum=0;
+    pthread_mutex_unlock(lock_s);
+    return OK;
+}
+</pre>
+</p>
+
+<p>注意两点:
+
+    <ul>
+
+        <li>1) 在thread_cond_wait()之前,必须先lock相关联的mutex, 因为假如目标条件未满足,pthread_cond_wait()实际上会unlock该mutex, 然后block,在目标条件满足后再重新lock该mutex, 然后返回.
+
+        <li>2) 为什么是while(sum<100),而不是if(sum<100) ?这是因为在pthread_cond_signal()和pthread_cond_wait()返回之间,
+ 有时间差,假设在这个时间差内,还有另外一个线程t4又把sum减少到100以下了,那么t3在pthread_cond_wait()返回之后,显然应该再检查一遍sum的大小.这就是用 while的用意
+    </ul></p>
+
+<h3>参考</h3>
+<p>&nbsp;<a href=http://blog.chinaunix.net/uid-23061624-id-79936.html >信号量 互斥锁 条件变量的区别</a>&nbsp;</p>

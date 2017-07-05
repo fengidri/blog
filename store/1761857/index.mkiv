@@ -1,0 +1,92 @@
+%title:the vim plugin of fengidri
+%post: 1
+%
+%
+\section{说明}
+本文是对于我个人的vim 插件的一些说明. 我发现我们有时基于一个很好的想法编写
+一个插件, 这个想法在我们的大脑中. 但是如果没有经常性使用, 又或者这个功能
+比较复杂一段时间之后, 我们自己都不知道这个软件的功能了. 
+
+并且如果没有详细地记录下这些插件的功能, 当我们开发新的功能的时候有可能破坏
+了旧的功能. 
+
+所有的插件的源码:\goto[pyplugin][http://github.com/fengidri/pyplugin]
+\section{vimlib}
+vimlib是pyplugin的核心. 提供了许多python接口. 这些接口是对于vim 的接口的封装. 
+同时也提供了一个插件机制. 可以方便地增加新命令与事件. 
+
+此外重点提供两个功能. vuirpc与im. 
+
+im的功能实质上是对vim在输入模式下的所有的输入的监控. 并定制这些输入的结果. 在这之上实现了一
+个五笔输入法. (补: 
+近来对于输入法这一部分进行了优化. 之前的是没有联想的, 也就是说输入的时候是很不方便地. 
+最近增加了这个功能. 对于输入的核心结构也进行了优化. 构架上使用了C/S的结构. 这样做的目的是
+加快了码表的载入速度, 不用每个vim进程都加载了码表. 而且实际上通过网络在每一次的时候输入
+获得结果对于实际的输入体验是没有影响的.
+
+另一方面在于数据结构的设计. 之前是完全依赖于sql 语句在每一次输入的时候进行查询, 现在使用字典树的方式
+进行数据的获得. 
+
+并且可能通过用户的输入记录对于输出的可选结果进行排序.
+
+2015年 02月 03日 星期二 13:16:13 CST)
+
+vuirpc 是一个网络实现. 用于与vuirpc\_server 进行连接实现一些更加丰富的gui 操作.
+
+\subsection{vuirpc}
+vuirpc是一个长连接. 因为在gui上的许多操作可能还要与vim 这一端进行一些信息的交互. 
+\starttyping
+client = VuiClient()
+client.sethandle(110, showfile)
+client.sethandle(200, showfile)
+client.request("/open/file", msg)
+response = client.response()
+\stoptyping
+在发出request 请求之后应该进行response等待. 这个接口会阻塞直到response 的状态code  大于等于200.
+在这个过程中会收到vuirpc\_server 的响应这些响应的code小于200. 对于这些响应如何处理
+是通过sethandle 方法设置回调实现的. 回调函数的参数是response.
+
+
+
+\section{Frain}
+这是由几个功能性插件组合成的插件用于对于工程进行管理. 当然也可以单独使用.
+\subsection{PathsExp}
+文件浏览工具, 与Nerttree 的功能相似. 只是为了提供更好的接口给Frain 中
+的其它插件. 
+
+为了可以与别的插件进行交互, PathsExp 是基于一个setting 的数据进行工作的.
+这个setting 中指定了当前要列出一工作的目录与这些目录的呈现的名字.
+
+\starttable
+\NC PathsExp [path [name]]\VL 依赖于当前的setting刷新数据.  如果有path/name参数, 则会把path/name 增加到setting中去.\AR
+\NC PathsExpFilter   \VL 开启/关闭过滤\AR
+\NC PathsExpRefresh  \VL 刷新当前的窗口. 目前PathsExp 没有对于实现的目录进行跟踪, 所以要手动刷新.\AR
+\NC PathsExpOpen   \VL 当focus 在PathsExp 窗口时, 打开当前光标下文件/目录\AR
+\NC PathsExpFind \VL 在PathsExp 窗口中显示当前文件的位置\AR
+\NC PathsExpGo \VL 切换到PathsExp 窗口\AR
+\stoptable
+
+
+\subsection{Project}
+进入工程模式. 打开工程的时候会自动调用PathsExp. 运行依赖于一些工程说明性信息. 
+
+\section{其它插件功能}
+
+打*的功能处于不稳定状态
+\starttable
+\NC GoAny/GoAny  \VL在当前的文件中进行跳转定位. 对于当前文件的分析是依赖于ctags\AR
+\NC GoFile/GoFile      \VL 在当前的项目的所有的文件中进行跳转.\AR
+\NC better\_edit/Align \VL 对于选中的行进行对齐\AR
+\NC better\_AlignTag   \VL 对于选中的行使用参数中的符号对齐\AR
+\NC c/CFunComment      \VL 为c中的函数增加优秀的注释\AR
+\NC goto_include/goto_include \VL 在项目中中转到头文件 \AR
+\NC hi_current_word \VL 着重显示当前的输入 \AR
+\NC show_buffer_pos/ShowBufferPos* \VL  在PathsExp中显示当前的文件的位置. \AR
+\NC src_info \VL 自动为源文件增加头文件信息 \AR
+\NC ssh_open* \VL  远程编辑 \AR
+\NC tags \VL tags 跳转 \AR
+\NC vim_search \VL 在当前的项目文件中进行查找 \AR
+\NC wiki/WikiPost \VL 把当前的buffer的内容进行wiki 提供 \AR
+\NC wiki/WikiPut \VL 提交当前的修改. 可以直接使用WikiPost 
+\NC wiki/WikiGet \VL 得到指定参数的wiki 内容. \AR
+\stoptable

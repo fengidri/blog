@@ -1,0 +1,6 @@
+
+
+
+ linux 下的截图工具其实有很多啦! 各个桌面环境基本都会自带一个.  我也是用过很多, 这次想好好调整一下这方面的设置.</p><p> 截图计划用scrot 工具. 看图这个事情吧, 比较头痛, 我一直没有找到我 满意的.这次好好找了一下 找到了nomacs2 这个我感觉很好</p><p> 命令是:<pre> notify-send 'Scrot...';scrot -s /dev/shm/Scrot.png -e 'nomacs $f'
+</pre>
+<p>把图片放到tmpfs中. 再用nomacs 打开图片. 完成截图的过程. 有一个小问题, scrot 在后台运行没有提示.

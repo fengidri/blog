@@ -1,0 +1,193 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Title: 记一次 TCP 参数的研究过程
+%Class: tcp
+%Post:1
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+\def\tcpone{ tcp_retries1  }
+\def\tcptwo{ tcp_retries2  }
+\def\stap{systemtap}
+
+最近发现线上的机器的在大文件下载的过程中失败率比较高, 一些原因的出现是在
+与用户的网络连接中出现的, 所以查看了一下网络参数.
+注意到了\tcpone这个参数. 发现线上的值太小了, 查一些网上的资料
+也发现这个值的计算是一个比较特别的过程并不是我们过去理解的那样是一个次数值.
+所以想用一些调度技术对内核的行为进行一些调查.
+
+
+\section{参数}
+我们先看看这两个参数 \tcpone, \tcptwo. 官方的文档如下
+\starttyping
+tcp_retries1 - INTEGER
+	This value influences the time, after which TCP decides, that
+	something is wrong due to unacknowledged RTO retransmissions,
+	and reports this suspicion to the network layer.
+	See tcp_retries2 for more details.
+
+	RFC 1122 recommends at least 3 retransmissions, which is the
+	default.
+
+tcp_retries2 - INTEGER
+	This value influences the timeout of an alive TCP connection,
+	when RTO retransmissions remain unacknowledged.
+	Given a value of N, a hypothetical TCP connection following
+	exponential backoff with an initial RTO of TCP_RTO_MIN would
+	retransmit N times before killing the connection at the (N+1)th RTO.
+
+	The default value of 15 yields a hypothetical timeout of 924.6
+	seconds and is a lower bound for the effective timeout.
+	TCP will effectively time out at the first RTO which exceeds the
+	hypothetical timeout.
+
+	RFC 1122 recommends at least 100 seconds for the timeout,
+	which corresponds to a value of at least 8.
+\stoptyping
+
+当\tcpone 设定的时间到的时候, 会进行一些路由与 MTU 之类的探测行为.
+这个值基本没有什么要修改的, 一般都是3.
+
+\tcptwo 是一个比较重要的值, 这个值用于设定在数据传输过程中的超时行为.
+默认的值是 15, 对应的大概在 15 分钟,  RFC 1122 见意的最小值是 8, 应对的是 100s.
+而我们线上的值是 5. 这个值是真的是太小了.
+
+\section{算法}
+
+如下是内核中对算法函数. 这个函数的是一个多用的函数, 并不只是针对于重传这一种情况.
+\startitemize
+\item sk: 是当前的 sock
+\item boundary: 就是用户的设置的参数 \tcpone 或 \tcptwo, 其实还可以是 tcp_orphan_retries 这个我们下次再说.
+\item timeout: 这个值可以由用户从应用层通过 socket 参数 TCP_USER_TIMEOUT 传递进来.
+\item syn_set: 是不是还在三次握手的过程中. 从这里可以知道, 这个函数还用于记录三次握手过程中的超时.
+\stopitemize
+
+\starttyping
+static bool retransmits_timed_out(struct sock *sk,
+				  unsigned int boundary,
+				  unsigned int timeout,
+				  bool syn_set)
+{
+	unsigned int linear_backoff_thresh, start_ts;
+	unsigned int rto_base = syn_set ? TCP_TIMEOUT_INIT : TCP_RTO_MIN;
+
+	if (!inet_csk(sk)->icsk_retransmits)// 检查重传次数是不是0, 否则直接返回
+		return false;
+
+	start_ts = tcp_sk(sk)->retrans_stamp; // 得到重传的是起始时间
+	if (unlikely(!start_ts))
+		start_ts = tcp_skb_timestamp(tcp_write_queue_head(sk));
+
+	if (likely(timeout == 0)) { // 用户有没有自己设置 timeout
+        // 在我们关心的数据传输中的重传的过程中这个值是固定的 9
+		linear_backoff_thresh = ilog2(TCP_RTO_MAX/rto_base);
+
+		if (boundary <= linear_backoff_thresh)
+			timeout = ((2 << boundary) - 1) * rto_base;
+		else
+			timeout = ((2 << linear_backoff_thresh) - 1) * rto_base +
+				(boundary - linear_backoff_thresh) * TCP_RTO_MAX;
+	}
+    // 这个就不用说明了吧
+	return (tcp_time_stamp - start_ts) >= timeout;
+}
+\stoptyping
+
+\section{验证方法}
+有什么方法可以验证这个呢? 一个方法是抓包, 可以从包上看到一些数据, 但是实际这个是不
+准确的, 因为这个timeout 是一个时间限制, 我们知道重传是使用指数退避的形式发送的. 这是粒子状态,
+而 timoout 是一具线性的连续状态, 粒子状态不可能精确地反应线性状态, 只能粗的显示.
+
+另一方面这个过程中还有一些别的原因会干扰到包的结果, 我在实现的测试中就会发现, 包里显示的
+重传的超时大于计算的结果, 并且是大很多, 后来我才知道是 orphan socket 也就是之前提到的那个 tcp_orphan_retries
+参数产生的影响.
+
+这样的方式总是会让人不能得到直接的结果, 有一种隔靴搔痒的感觉.
+
+所以我决定使用 \stap.
+
+为了方便测试, 还要有一个方便的环境模拟的方式, 我要在数据的传输过程中, 中止数据的响应, 让服务端收到不
+客户端的 ACK. 用了很多方法, 都不是太方便. 是后想到了一种方法, 使用 iptables 把发给服务端的
+FIN, RST 给 DROP掉. 然后用curl 进行一次请求, 在接收数据的过程中把 curl 关掉这样就可以引发服务端的 TCP 传输重试.
+
+\section{\stap}
+ 当我期待的看着 \stap 的输出的结果时候是, 一堆的问号. 代码被优化了, 一些变量也参数是看不到了.
+ 这下好了, \stap 遇到对手了. \stap 对于内联函数还有优化的参数是没有什么直接的办法的.
+ 好在这里的我们的关心的 timeout 同时也是一个参数, 我们可以通过 \stap 提供的方法得到参数的值, 被优化了也可以.
+ 那么 \stap 是如何得到这些被优化的值的, 其实被优化的参数就是直接放到的 CPU 寄存器里了.
+ 我在实现的时候并没有使用 \stap 提供的方法, 而是从我的前一篇 \goto{AMD64 寄存器(GCC)}{http://blog.fengidri.me/chapter.html?id=33978491}
+ 里说的那些, GCC 的优化方法就是把这些参数放到指定的寄存器里, 我只要直接却取就可以了.
+
+ 关于这一点的确认也可以把内核的对应函数的汇编代码打印出来看看, 就知道了.
+ 方法在之前的文章里有讲, \goto{反汇编内核指定函数}{http://blog.fengidri.me/chapter.html?id=33966324}
+
+\goto{脚本在这里 }{https://github.com/fengidri/systemtap/blob/master/retransmits_timed_out.stp}
+如下是我在实际的过程中打印出来的结果.
+\starttyping
+ready go: Hz: 300
+Init Start *** 1449634488296
+1449634488296: from:1989 > dport:35704 boundary:3 return:0 rdx(timeout):0 flag:768
+1449634488296: from:1989 > dport:35704 boundary:5 return:0 rdx(timeout):0 flag:768
+1449634488296: from:1989 > dport:35704 boundary:4 return:0 rdx(timeout):1860 flag:768
+1449634488736: from:1989 > dport:35704 boundary:3 return:0 rdx(timeout):900 flag:768
+1449634488736: from:1989 > dport:35704 boundary:5 return:0 rdx(timeout):3780 flag:768
+1449634488736: from:1989 > dport:35704 boundary:4 return:0 rdx(timeout):1860 flag:768
+1449634489619: from:1989 > dport:35704 boundary:3 return:0 rdx(timeout):900 flag:768
+1449634489619: from:1989 > dport:35704 boundary:5 return:0 rdx(timeout):3780 flag:768
+1449634489619: from:1989 > dport:35704 boundary:4 return:0 rdx(timeout):1860 flag:768
+1449634491387: from:1989 > dport:35704 boundary:3 return:1 rdx(timeout):900 flag:768
+1449634491387: from:1989 > dport:35704 boundary:5 return:0 rdx(timeout):3780 flag:768
+1449634491387: from:1989 > dport:35704 boundary:4 return:0 rdx(timeout):1860 flag:768
+1449634494913: from:1989 > dport:35704 boundary:3 return:1 rdx(timeout):900 flag:768
+1449634494913: from:1989 > dport:35704 boundary:5 return:0 rdx(timeout):3780 flag:768
+1449634494913: from:1989 > dport:35704 boundary:4 return:1 rdx(timeout):1860 flag:768
+1449634501967: from:1989 > dport:35704 boundary:3 return:1 rdx(timeout):900 flag:768
+1449634501967: from:1989 > dport:35704 boundary:5 return:1 rdx(timeout):3780 flag:768
+**** 13671
+ 0xffffffff814ee540 : tcp_write_err+0x0/0x50 [kernel]
+ 0xffffffff814eede3 : tcp_retransmit_timer+0x203/0x780 [kernel]
+ 0xffffffff814ef3eb : tcp_write_timer_handler+0x8b/0x200 [kernel]
+ 0xffffffff814ef5da : tcp_write_timer+0x7a/0x80 [kernel]
+ 0xffffffff810ddb19 : call_timer_fn+0x39/0x130 [kernel]
+ 0xffffffff810dde37 : run_timer_softirq+0x227/0x2d0 [kernel]
+ 0xffffffff8107958f : __do_softirq+0xcf/0x290 [kernel]
+ 0xffffffff810798c3 : irq_exit+0xa3/0xb0 [kernel]
+ 0xffffffff815941d6 : smp_apic_timer_interrupt+0x46/0x60 [kernel]
+ 0xffffffff815924bb : apic_timer_interrupt+0x6b/0x70 [kernel]
+**** 1449634501967
+ 0xffffffff814dcf40 : tcp_done+0x0/0x90 [kernel]
+ 0xffffffff814ee575 : tcp_write_err+0x35/0x50 [kernel]
+ 0xffffffff814eede3 : tcp_retransmit_timer+0x203/0x780 [kernel]
+ 0xffffffff814ef3eb : tcp_write_timer_handler+0x8b/0x200 [kernel]
+ 0xffffffff814ef5da : tcp_write_timer+0x7a/0x80 [kernel]
+ 0xffffffff810ddb19 : call_timer_fn+0x39/0x130 [kernel]
+ 0xffffffff810dde37 : run_timer_softirq+0x227/0x2d0 [kernel]
+ 0xffffffff8107958f : __do_softirq+0xcf/0x290 [kernel]
+ 0xffffffff810798c3 : irq_exit+0xa3/0xb0 [kernel]
+ 0xffffffff815941d6 : smp_apic_timer_interrupt+0x46/0x60 [kernel]
+ 0xffffffff815924bb : apic_timer_interrupt+0x6b/0x70 [kernel]
+\stoptyping
+这个脚本会指定服务端的端口.
+
+
+这里的 timeout 是jiffies 数, 内核中使用这个做为时间计数,
+输出结果中有 HZ 的输出是 300, 所以 5 对应的时间是 3780 /300 与直接计算的结果相同.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

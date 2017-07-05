@@ -1,0 +1,41 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Title: 磁盘所在 disk 组
+%Class: linux
+%Post:1
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+一直没有注意到磁盘的组是 disk.
+\starttyping
+$ll /dev/sd*
+brw-rw---- 1 root disk 8, 0 Dec 30 18:34 /dev/sda
+brw-rw---- 1 root disk 8, 1 Dec 30 18:34 /dev/sda1
+brw-rw---- 1 root disk 8, 2 Dec 30 18:34 /dev/sda2
+\stoptyping
+
+然后线上一些系统里出现的是却是 root 组.
+之后我发现这个系统里的 /lib/udev/rules.d 下的规则被清空了.
+这才发现原生的系统中有文件: /lib/udev/rules.d/50-udev-default.rules
+中间有这一行:
+
+\starttyping
+SUBSYSTEM=="block", GROUP="disk"
+\stoptyping
+
+如果想进行修改, 在 /etc/udev/rules.d/ 增加一个文件, 但是文件名前面两个
+数字要大于 50, 所以可以增加文件 /etc/udev/rules.d/90-disks.rules.
+\starttyping
+KERNEL=="sd*", GROUP="root"
+\stoptyping
+
+
+
+Udev 自动侦测规则文件的变化，所以修改会立即生效，无需重启 udev。
+但已接入设备的规则不会自动触发。像 USB 这类热插拔设备也许需要重新插拔才能使新规则生效，
+也可能需要卸载并重载内核的 ohci-hcd 和 ehci-hcd 模块以重新挂载所有 USB 设备。
+如果规则自动重载失败
+\starttyping
+# udevadm control --reload
+\stoptyping
+可以手工强制触发规则
+\starttyping
+# udevadm trigger
+\stoptyping

@@ -1,0 +1,281 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Title:  ATS - v5.0.x 的新特性
+%Class: ats
+%Post:1
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+
+\section{records.config 新结构}
+对于 \bold{records.config} 的结构进行了清理, 目前大约只有原来的1/3.
+只有经常使用的功能才会包含.
+另外我们还对于一些变量的默认值进行了修改.
+
+\subsection{新的配置项}
+\bold{proxy.config.http.cache.range.write}
+The old behavior (before v5.0.0) was to always lock the object in cache on a Range, even it is unlikely that the object fetched can be cached. The new behavior is to not attempt such a lock, unless this new configuration is enabled. The use case for this is if your origin ignores the Range: header, and responds with the full (complete) object anyways.
+
+\subsection{默认值修改}
+\startitemize
+\item proxy.config.url_remap.pristine_host_hdr = 0 (was 1)
+\item proxy.config.http.normalize_ae_gzip = 1 (was 0)
+\item proxy.config.http.cache.allow_empty_doc = 1 (was 0)
+\item proxy.config.http.cache.ignore_client_cc_max_age = 1 (was 0)
+\item proxy.config.http.cache.ignore_accept_mismatch = 2 (was 0)
+\item proxy.config.http.cache.ignore_accept_language_mismatch = 2 (was 0)
+\item proxy.config.http.cache.ignore_accept_encoding_mismatch = 2 (was 0)
+\item proxy.config.http.cache.ignore_accept_charset_mismatch = 2 (was 0)
+\item proxy.config.http.keep_alive_post_out = 1 (was 0)
+\item proxy.config.http.background_fill_active_timeout = 0 (was 60)
+\item proxy.config.http.background_fill_completed_threshold = 0.0 (was 0.5)
+\item proxy.config.net.sock_send_buffer_size_in = 1 (was 256K)
+\item proxy.config.net.sock_option_flag_out = 0x1 (was 0x0)
+\item proxy.config.cache.enable_read_while_writer = 1 (was 0)
+\item proxy.config.dns.round_robin_nameservers = 1 (was 0)
+\item proxy.config.http.connect_ports = 443 (was 443 563)
+\item proxy.config.log.max_space_mb_for_logs = 25000 (was 2500)
+\item proxy.config.log.custom_logs_enabled = 1 (was 0)
+\item proxy.config.log.common_log_is_ascii = 1 (was 0)
+\item proxy.config.ssl.server.honor_cipher_order = 1 (was 0)
+\stopitemize
+
+
+\subsection{删除的配置项}
+\startitemize
+\item proxy.config.http.cache.when_to_add_no_cache_to_msie_requests
+\item proxy.config.log.xuid_logging_enabled
+\stopitemize
+
+\section{试验 SPDY 支持}
+在ATS 里支持 SPDY 3.1, 需要 sdpylay 库的支持. 这是一个编译选项, 要在里编译时打开.
+
+\section{改进 TLS/SSL 和 HTTPS}
+\subsection{ALPN 支持}
+目前支持除了 NPN 外的 ALPN, 这是支持 HTTP/2 的前提.
+
+\subsection{TLS 证书}
+目前支持通过密码短语提供解密TLS 证书中的私钥的方式:
+\starttyping
+ssl_key_pass_dialog=[builtin|exec:/path/to/program]
+
+  Method used to provide a pass phrase for encrypted private keys.
+  Two options are supported: builtin and exec
+  builtin - Requests passphrase via stdin/stdout. Useful for debugging.
+  exec: - Executes a program and uses the stdout output for the pass
+  phrase.
+
+Example:
+
+  ssl_cert_name=foo.pem ssl_key_pass_dialog="exec:/usr/bin/mypass foo"
+\stoptyping
+
+\subsection{TLS session metrics}
+A whole slew of new metrics are made available for TLS sessions, such as how often keys are reused, which ciphers are used etc.
+
+\section{LuaJit 和 Lua}
+LuaJit目前包含在代码树里, 还有一个基于插件的 LuaJit 也可以用. 尽管还在实验中, 但是会改变的.
+APIS 还没有冻结. 继续前进, 目前是为了在核心里包含更多的 Lua 特性, 包括配置.
+
+\section{Logging}
+\subsection{new action: WIPE_FIELD_VALUE}
+对于自定义的日志格式, 新增加一个 action : WIPE_FIELD_VALUE. 日志输出前, 你可以把一些域刷掉,
+这可以用于隐藏一些敏感信息, 比如: username 和 passwords.
+
+\subsection{新的日志标签: \%<pitag>, \%<piid>}
+基于新的 APIS(下面讲到), 插件可以使用一个 插件的 tag 或 ID 来标记一个内部请求.
+这可以用于后续的相关的请求和事件的日志.
+
+\section{New and improved plugins }
+这个版本有很多个新的插件, 以及增加到插件的新的功能.
+
+\subsection{tcpinfo}
+这个插件被得到了稳定版本, 并把名字从 tcp_inifo 改成了 tcpinfo.
+
+这个插件提供每一个 tcp 会话相关的信息. 经过几次的迭代更新, 这个插件已经是一个稳定的插件了.
+
+\subsection{重命名stale_while_revalidate}
+把rfc5861 重命名为 stale_while_revalidate.
+
+\subsection{优化: regex_remap}
+一些新的选项可用:
+\startitemize
+\item @caseless: 让正则忽略大小写
+\item @lowercase_subtitutions: 让所有的正则表达置换, 只识别小写.
+\item @proxy.config....=<value>: 重新设置 records.config 中的配置项.
+\stopitemize
+
+\subsection{优化: header_rewrite}
+对于这个插件有相当多的优化:
+\startitemize
+\item 让目的地址的重写更加方便(不再只是在remap 里)
+\item 改善钩子的管理, 这样你可以从remap.config 里触发规则, 但是是不同的钩子.
+这很有用, 当你想给一个remap 一个特定的头给源站.
+\item 处理内部请求
+\item 对于用户ip进行分析
+\stopitemize
+\goto{详细资源}{https://docs.trafficserver.apache.org/en/latest/reference/plugins/header_rewrite.en.html}
+
+\subsection{New: background_fetch}
+这是一个新的实验性的插件, 当用户请求带有range 的时候, 会后端请求整个文件.
+目前我们并不在缓存中缓存部分的对象. 这是一个方式可以让这样的对象缓存在cache 里.
+结合\bold{ read-while-writer feature}, 可以提升缓存命中率, 并显著提升性能.
+
+\subsection{New: collapsed_connection}
+这个插件可以细致地处理当用户端直接abort 的情况下到源站的连接.
+有一此类似于\bold{read-while-write}.
+
+\subsection{New: s3_auth}
+ Amazon S3 services 有一个可行的认证模块, 这个插件允许 ATS 使用 AWS 认证方式连接
+ 把 AWS S3 做为源站.
+ 目前这个插件只使用了 v2规范的 APIS.
+
+\subsection{New: url_sig}
+这个插件对于 URLS 进行加密验证.
+
+\subsection{New: regex_revalidate}
+这个插件允许你使用正则对于指定的请求强制进行验证.
+
+\section{traffic_shell removed}
+命令行工具 \bold{traffic_shell} 已经被删除了.
+维护这个命令行工具的意义已经不大了.
+ 对于还要用到这个功能的用户, 有一个\bold{traffic_shell.pl} 可以用.
+
+\section{改进traffic_line}
+\bold{traffic_line} 增加了一个选项\bold{'-m'}, 这让你可以查看统计数据, 并可以
+通过配置规则指定要查看的内容.
+这很方便, 用于分析一些指标与系统配置, 是一个非常棒的自检工具.
+此外, 对于配置进行修改时, 会有一个更好的反馈.
+
+\section{APIS 进行的修改与删除(与4.2.x 不兼容)}
+\startitemize
+\item 修改\bold{TSRecordType} 枚举的值, 增加2.
+
+这个插件目前基本是一个位图. 允许读写 bits. 大部分情况下, 应该重新编译你的插件,
+因为这些与5.0.x 不再兼容.
+
+\item 删除了: TSHttpTxnSetHttpRetBody()
+
+删除这个 API 对于 HTTP 状态机而言可以减小 25\% 的内存消耗. 可以使用意义更加明确的
+\bold{TSHttpTxnErrorBodySet()} 接口代替.
+
+\item 减小或删除 TSRedirectUrlSet() 和 TSRedirectUrlGet() 的内存占用.
+
+之前\bold{TSRedirectUrlSet()} 会盲目地调用 strdup() 复制输入的字符串, 并占用它们.
+这次修改之后, 插件占用这些字符串, 并且在必要的情况下释放它们.
+这在一些情况下, 对于内容的分配是很有意义的. 代码这些 APIS 是: \bold{TSHttpTxnRedirectUrlSet()}
+和 \bold{TSHttpTxnRedirectUrlGet()}.
+\stopitemize
+
+\section{新的插件 APIS}
+下面介绍讨论性的修改, 与新增加的发布的 APIS.
+\subsection{Name lookups of internal state values}
+这主要用于调试, 并且可以查看内部状态的原文. APIS 如下:
+\starttyping
+tsapi const char* TSHttpServerStateNameLookup(TSServerState state);
+tsapi const char* TSHttpHookNameLookup(TSHttpHookID hook);
+tsapi const char* TSHttpEventNameLookup(TSEvent event);
+\stoptyping
+
+\subsection{带有插件 标识与ID 的HTTP 连接 }
+这个新的 API 发布与 \%<pitag> 与 \%<piid> 是同步的, 这是 \bold{ TSHttpConnect()}的一个设置
+\starttyping
+tsapi TSVConn TSHttpConnectWithPluginId(struct sockaddr const* addr, char const* tag, int64_t id);
+\stoptyping
+
+\subsection{探测一个 session 是否一个内部请求}
+这是基于\bold{TSHttpIsInternalRequest()} 的扩展.
+\starttyping
+TSReturnCode TSHttpIsInternalSession(TSHttpSsn ssnp);
+\stoptyping
+
+\subsection{探测一个transaction 会不会缓存}
+这个新的 API 会分析 reqeust/response 头, 然后基于内部逻辑来分析当前的请求会不会缓存.
+这对于想主动把 资源放到缓存中的插件是很有用的.
+\starttyping
+int TSHttpTxnIsCacheable(TSHttpTxn txnp, TSMBuffer request, TSMBuffer response);
+\stoptyping
+
+\subsection{Get the SSL object of a session}
+这个新的 API 让插件可以访问 TLS(OpenSSL) 的底层.
+\starttyping
+void* TSHttpSsnSSLConnectionGet(TSHttpSsn ssnp);
+\stoptyping
+
+\subsection{Set/Get() a redirect URL for ATS to follow}
+下面的两个 API 用于代替新的 API 来得到, 设置重定向的 URL.
+\starttyping
+void TSHttpTxnRedirectUrlSet(TSHttpTxn txnp, const char* url, const int url_len);
+const char* TSHttpTxnRedirectUrlGet(TSHttpTxn txnp, int* url_len_ptr);
+\stoptyping
+
+\subsection{得到当前重定向的次数}
+这个新的API 可以得到一个请求被重试的次数. 当你想把请求重次到不同的服务器,
+基于这个 API 你可以继续还是中止重定向, 或基于次数定向到不同的服务器.
+
+这个API 会与上面的重定向 API 结合使用.
+\starttyping
+int TSHttpTxnRedirectRetries(TSHttpTxn txnp);
+\stoptyping
+\subsection{从文件描述符创建一个 TSVConn}
+\starttyping
+TSVConn TSVConnFdCreate(int fd);
+\stoptyping
+这个 API 可以基于 socket 创建一个 TSVConn. 这对于从外界得到资源是很有用的.
+
+\section{5.0.1 安全升级}
+由于 5.0.0 中的一个安全问题, 在5.0.1 中有一个不兼容的修改.
+
+为了监视 proxy 的状态, 一个保姆进程(traffic_cop) 会定期使用一个特定的
+url(http://127.0.0.1:8083/synthetic.txt) 来探测它.
+为了安全性, 对于心跳探测, 增加了一些额外的检查.
+这可以会导致 Traffic Sever 不能成功处理健康检查.
+
+\subsection{症状}
+\startitemize
+\item traffic_sever 或 traffic_manager 进程会频繁重启(快于 1 分钟)
+\item 在 error.log 里会有如下格式的日志:
+
+\starttyping
+20140806.13h33m54s CONNECT: could not connect to 127.0.0.1 for 'http://127.0.0.1:8083/synthetic.txt' (setting last failure time)
+20140806.13h33m54s RESPONSE: sent 192.168.56.196 status 502 (Server Hangup) for 'http://127.0.0.1:8083/synthetic.txt'
+\stoptyping
+
+\item 会有如下的 syslog:
+\starttyping
+traffic_cop[13730]: (http test) received non-200 status(502)
+traffic_cop[13730]: server heartbeat failed [1]
+\stoptyping
+
+\stopitemize
+\subsection{原因}
+
+是由于对于期待的请求格式的修改造成的: 已经原因如下:
+
+\startitemize
+\item iptables NAT masquerade.
+If connections on the loopback are affected this will break the heartbeat because the connection source address will be a host address, not the loopback address. To fix this, change your iptables rules to not perform NAT masquerade on the heartbeat connection. Two possible approaches are
+\startitemize
+\item Explicitly disable MASQUERADE on the loopback interface and addresses (make these the first rules in the NAT POSTROUTING list
+
+\starttyping
+iptables --insert POSTROUTING --table nat -o lo -j RETURN
+iptables --append POSTROUTING --table nat -s 127.0.0.1 -j RETURN
+iptables --append POSTROUTING --table nat -d 127.0.0.1 -j RETURN
+\stoptyping
+\item Apply MASQUERADE explicitly to the non-loopback interfaces. If you have eth0 and eth1 then use
+\starttyping
+iptables --append --table nat -o eth0 -j MASQUERADE
+iptables --append --table nat -o eth1 -j MASQUERADE
+\stoptyping
+\stopitemize
+
+\item Generic remap rules, such as "map / http://some.other.place.com"
+\startitemize
+\item add an additional rule to prevent the generic rule from triggering on heartbeat connections, such as map /synthetic.txt http://localhost:8083/synthetic.txt
+\item apply the fix from JIRA Issues Macro: com.atlassian.sal.api.net.ResponseStatusException: Unexpected response received. Status code: 404  . TS-2934 (remove this when wiki is fixed and preceding link works)
+\stopitemize
+\stopitemize
+
+
+
+\section{参考}
+\goto{What's new in v5.0.x}{https://cwiki.apache.org/confluence/display/TS/What\%27s+new+in+v5.0.x}

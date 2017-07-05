@@ -1,0 +1,95 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Title: mlock
+%Class: linux
+%Post:1
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+\goto{mlock}{http://man7.org/linux/man-pages/man2/mlock.2.html}
+用于锁定进程的内存到物理内存, 不允许其被交换到 swap. 对于要求性能与实时性的情况下比较有用.
+
+但是物理内存是有限的, 所以系统有一些限制, 不是任意进程都可以把任意数量的内存, 设置成 mlock 的.
+
+这个限制是通过 ulimit 实现的.
+\starttyping
+#ulimit -a
+-t: cpu time (seconds)              unlimited
+-f: file size (blocks)              unlimited
+-d: data seg size (kbytes)          unlimited
+-s: stack size (kbytes)             8192
+-c: core file size (blocks)         0
+-m: resident set size (kbytes)      unlimited
+-u: processes                       11795
+-n: file descriptors                1024
+-l: locked-in-memory size (kbytes)  64
+-v: address space (kbytes)          unlimited
+-x: file locks                      unlimited
+-i: pending signals                 11795
+-q: bytes in POSIX msg queues       819200
+-e: max nice                        0
+-r: max rt priority                 0
+-N 15:                              unlimited
+\stoptyping
+
+可以看到一般情况下的, 限制是 64k. 就是说, 一般的情况下, 设定 mlock 的内存不能超过 64k.
+\starttyping
+-l: locked-in-memory size (kbytes)  64
+\stoptyping
+
+以下是 rlimit 的 man 手册里的说明.
+\starttyping
+  RLIMIT_MEMLOCK
+              The maximum number of bytes of memory that may be locked into
+              RAM.  In effect this limit is rounded down to the nearest
+              multiple of the system page size.  This limit affects mlock(2)
+              and mlockall(2) and the mmap(2) MAP_LOCKED operation.  Since
+              Linux 2.6.9 it also affects the shmctl(2) SHM_LOCK operation,
+              where it sets a maximum on the total bytes in shared memory
+              segments (see shmget(2)) that may be locked by the real user
+              ID of the calling process.  The shmctl(2) SHM_LOCK locks are
+              accounted for separately from the per-process memory locks
+              established by mlock(2), mlockall(2), and mmap(2) MAP_LOCKED;
+              a process can lock bytes up to this limit in each of these two
+              categories.  In Linux kernels before 2.6.9, this limit
+              controlled the amount of memory that could be locked by a
+              privileged process.  Since Linux 2.6.9, no limits are placed
+              on the amount of memory that a privileged process may lock,
+              and this limit instead governs the amount of memory that an
+              unprivileged process may lock.
+\stoptyping
+
+注意到 2.6.9 之后的系统中对于有特权的进程, 就不再限制了. 那么哪些进程有特权呢?
+\starttyping
+Limits and permissions
+       In Linux 2.6.8 and earlier, a process must be privileged
+       (CAP_IPC_LOCK) in order to lock memory and the RLIMIT_MEMLOCK soft
+       resource limit defines a limit on how much memory the process may
+       lock.
+
+       Since Linux 2.6.9, no limits are placed on the amount of memory that
+       a privileged process can lock and the RLIMIT_MEMLOCK soft resource
+       limit instead defines a limit on how much memory an unprivileged
+       process may lock.
+\stoptyping
+
+2.6.9 之后, 对于有 CAP_IPC_LOCK 权限的进程 rlimit 就不再进行限制了. rlimit 中的限制,
+只针对于非特权进程了.
+
+root 当然是特权进程了, CAP_IPC_LOCK 怎么设置呢?
+\starttyping
+#sudo setcap cap_ipc_lock=eip a.out
+\stoptyping
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,133 @@
+<p></p>
+
+<h3>noop</h3>
+<p>noop是linux一个基本的io调度器.</p>
+
+<p>源代码位置在 block/noop-iosched.c</p>
+
+<p>先来看看这个模块的基本信息.
+<pre>
+MODULE_AUTHOR("Jens Axboe");
+MODULE_LICENSE("GPL");
+MODULE_DESCRIPTION("No-op IO scheduler");
+</pre>
+</p>
+
+<h3>模块</h3>
+<p>noop 模块是一个基于elevator 的内核模块.
+基本的内核模块就不多说了, 来看看elevator 的模块结构.
+<pre>
+static int __init noop_init(void)
+{
+	elv_register(&amp;elevator_noop);
+
+	return 0;
+}
+
+static void __exit noop_exit(void)
+{
+	elv_unregister(&amp;elevator_noop);
+}
+</pre>
+
+从这里可以看到, elevator 模块是通过elevator_noop这个数据结构来向
+elevator 进行注册的. 那我们有必要先了解这数据结构.</p>
+
+<p>代码里这个结构的初始化如下:
+<pre>
+static struct elevator_type elevator_noop = {
+	.ops = {
+		.elevator_merge_req_fn   = noop_merged_requests,
+		.elevator_dispatch_fn    = noop_dispatch,
+		.elevator_add_req_fn     = noop_add_request,
+		.elevator_queue_empty_fn = noop_queue_empty,
+		.elevator_former_req_fn  = noop_former_request,
+		.elevator_latter_req_fn  = noop_latter_request,
+		.elevator_init_fn        = noop_init_queue,
+		.elevator_exit_fn        = noop_exit_queue,
+	},
+	.elevator_name = "noop",
+	.elevator_owner = THIS_MODULE,
+};
+</pre>
+
+这里面的几个结构的意义如下:</p>
+
+<p>
+    <ul>
+
+<li><b>elevator_merge_fn</b>&nbsp;&nbsp;&nbsp;&nbsp;
+
+查询一个request，用于将bio并入</p>
+
+<p>
+<li><b>elevator_merge_req_fn</b>&nbsp;&nbsp;&nbsp;&nbsp;
+
+将两个合并后的请求中多余的那个给删除</p>
+
+<p>
+<li><b>elevator_dispatch_fn</b>&nbsp;&nbsp;&nbsp;&nbsp;
+
+将调度器的队列最前面的元素取出，分派给request_queue中的请求队列以等候响应.</p>
+
+<p>
+<li><b>elevator_add_req_fn</b>&nbsp;&nbsp;&nbsp;&nbsp;
+
+将一个新的request添加进调度器的队列</p>
+
+<p>
+<li><b>elevator_queue_empty_fn</b>&nbsp;&nbsp;&nbsp;&nbsp;
+
+检查调度器的队列是否为空</p>
+
+<p>
+<li><b>elevator_set_req_fn, elevator_put_req_fn</b>&nbsp;&nbsp;&nbsp;&nbsp;
+
+分别在创建新请求和将请求所占的空间释放到内存时调用</p>
+
+<p>
+<li><b>elevator_former_req_fn</b>&nbsp;&nbsp;&nbsp;&nbsp;
+
+在noop调度器链表中，获取指定请求的前一个请求</p>
+
+<p>
+<li><b>elevator_latter_req_fn</b>&nbsp;&nbsp;&nbsp;&nbsp;
+
+在noop调度器链表中，获取指定请求的后一个请求</p>
+
+<p>
+<li><b>elevator_init_fn</b>&nbsp;&nbsp;&nbsp;&nbsp;
+
+用于初始化调度器实例. 返回的数据返回给上层, 被上层的
+<b>struct elevator_queue</b>结构的<b>elevator_data</b>成员.</p>
+
+<p>
+<li><b>elevator_exit_fn</b>&nbsp;&nbsp;&nbsp;&nbsp;
+
+会对于elevator_init_fn初始化的数据进行释放.
+    </ul></p>
+
+<p>可以看到其数据结构:
+<pre>
+struct noop_data {
+	struct list_head queue;
+};
+</pre>
+
+其实noop 维护一个fifo. 当io请求过来, 就会加入到链表的后面.</p>
+
+<p>理解了这些就ok了, noop很简单啦.</p>
+
+<h3>分析</h3>
+<p>这个东西很简单. 没有什么优化.</p>
+
+<h4>没对请求IO 进行排序</h4>
+<p>如果队列中，先要求访问0扇区，后又要求访问最后一个扇区，马上又迂回到2扇区，机械硬盘的磁头只能疯跑了。</p>
+
+<p>但是，没有机械结构的存储器（SSD，u盘，sd卡，内存等等）这回就牛了：随你怎么跳。所以说noop适合这些没机械结构的器件。</p>
+
+<h4>没有参与调度</h4>
+<p>没有进行调度对于请求的优先级没有区分处理这样是很不好的.</p>
+
+<h3>参考</h3>
+<p>&nbsp;<a href=http://tieba.baidu.com/p/2767146878 >io调度器noop与deadline源码级分析</a>&nbsp;</p>

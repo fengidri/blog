@@ -1,0 +1,146 @@
+<p>下面列出一些有用且有趣的内核与驱动的优化方法, 但是在使用之前要研究一下.</p>
+
+<h3>Tickless System</h3>
+<p>这个特性使用请求式的定时器中断, 这意味着, 在 idle 的状态下, 会减小的定时器中断的发生.
+这有得于省电, 冷却系统, 更少的上下文切换.
+<pre>
+内核参数: CONFIG_NO_HZ=y
+</pre>
+</p>
+
+<h3>Timer Frequency</h3>
+<p>你可以设置定时器发生的频率. 当一个定时器中断在 CPU 中发生, CPU 正在处理的进程会被打断.
+这个选项对于非交互的运行于多 CPU 的服务特别有用.
+<pre>
+内核参数: CONFIG_HZ_100=y and CONFIG_HZ=100
+</pre>
+</p>
+
+<h3>Connector</h3>
+<p>connector 模块是一个内核模块, 这个模块会报告进行的事件如 fork, exec, exit 到用户空间.
+这对于进行监控是很有用的. 你可以编写一个简单的工具或已有的如 &nbsp;<a href= >god</a>&nbsp;来观测一些
+重要的流程. 如果进程由于一些信息如(SIGSEGV, SIGBUS) 或 非正常退出, 你会从内核得到一个同步的通知.
+从而你可以重启进行, 保证停机时间到最底.
+<pre>
+内核参数: CONFIG_CONNECTOR=y and CONFIG_PROC_EVENTS=y
+</pre>
+</p>
+
+<h3>TCP segmentation offload (TSO)</h3>
+<p>这是一个是非常收欢迎的新网卡特性. 这让内核可以把分割大包为小包的工作让给网卡来完成. 这让 CPU 可以去做
+更多有意义的工作, 减小了 CPU 的负载. 如果网卡支持, 可以如下打开这个功能:
+<pre>
+ethtool -K eth1 tso on
+</pre>
+</p>
+
+<h3>Intel I/OAT DMA Engine</h3>
+<p>这个内核选项可以打开 Xeon CPU 中的 DMA, 这个可以提高网络的吞吐量, 因为 DMA 可以让内核把 网络数据的拷贝工作
+从 CPU 转移到 DMA.</p>
+
+<p>如下查看:
+<pre>
+[joe@timetobleed]% dmesg | grep ioat
+ioatdma 0000:00:08.0: setting latency timer to 64
+ioatdma 0000:00:08.0: Intel(R) I/OAT DMA Engine found, 4 channels, device version 0x12, driver version 3.64
+ioatdma 0000:00:08.0: irq 56 for MSI/MSI-X
+</pre>
+
+这个还可以通过 /sys/class/dma 来查看.</p>
+
+<p><pre>
+内核参数: CONFIG_DMADEVICES=y and CONFIG_INTEL_IOATDMA=y and CONFIG_DMA_ENGINE=y and CONFIG_NET_DMA=y and CONFIG_ASYNC_TX_DMA=y
+</pre>
+</p>
+
+<h3>Direct Cache Access (DCA)</h3>
+<p>Intel's I/OAT 还包含一个称为 Direct Cache Access (DCA) 的特性. DCA 可以让一个设备预热 CPU 缓存.
+一些 NICs 支持DCA, 最流行的是 Intel 10GbE driver(ixgbe). 参考你的 NIC 设备的文档查看是否支持 DCA.
+为了开启 DCA, 在 BLOS 上有一个开关要被打开. 一些支持 DCA 但是没有开头.
+如下检查 DCA:
+<pre>
+$dmesg | grep dca
+dca service started, version 1.8
+</pre>
+
+如果支持, 但是被关了, 如下查看:
+<pre>
+ioatdma 0000:00:08.0: DCA is disabled in BIOS
+</pre>
+</p>
+
+<p><pre>
+内核选项: CONFIG_DCA=y
+</pre>
+</p>
+
+<h3>NAPI</h3>
+<p>"New API"(NAPI)是内核为了提升调整网卡的性能对于包处理代码的重构. 其提供了两个主要的特性.
+
+    <ul>
+
+        <li>Interrupt mitigation: 高速度网络可以每秒创建成千个中断. 所有的这些会告诉系统其已经知道信息.
+其已经有很多包要处理. NAPI 会允许设备在高流量的情况下依赖于一些中断运行, 当然对应于系统负载的下降.</p>
+
+<p>
+        <li>Packet throtting: 当系统被吞没了, 必须要丢掉一些包的时候, 更好的是努力地去处理这些包.
+NAPI 设备会在内核接触到包之前把丢掉.
+    </ul>
+目前很多最新的 NIC 设备都是自动支持 NAPI, 所以不用做任何事情.
+一些设备要你明确地在内核配置里指定 NAPI, 或在编译驱动的时候通过命令行指定.
+如果不确定, 要检查你的设备文档.</p>
+
+<h3>Throttle NIC Interrupts</h3>
+<p>一些设备充许用户指定 NIC 生成中断的速度. e1000e 网卡充许使用命令行选项 InterruptThrottleRate.</p>
+
+<p>当使用 insmod 载入模块, 对于 e1000e 有两个动态的中断控制参数.
+在命令行指定为1(dynamic) 和 3(dynamic conservative).
+自适应流量算法会依赖于不同的情况调整中断频率.
+动态与保守的区别在于 "Lowest Latency" 的流量类型. dynamic 有更激进的中断频率.</p>
+
+<p><pre>
+With modprobe: insmod e1000e.o InterruptThrottleRate=1
+</pre>
+</p>
+
+<h3>Process and IRQ affinity</h3>
+<p>linux 充许用户指定 CPU 与 中断处理绑定.
+
+    <ul>
+
+        <li>Processes: 你可以使用 taskset 指定一个 process 运行于那个 CPU
+
+        <li>Interrupt Handlers: 这个中断表在可以在 /proc/interrupts 找到, 每一个中断可以
+在每一个中断在 /proc/irq 目录里的 smp_affinity 文件里设置
+    </ul>
+这很有用, 因为你可以把 网络的处理指定到指定的 CPU, 所以当一个共享的次数到达(网络栈上的锁) 和
+CPU 缓存的载入. 下一次的句柄运行, 会被放到相同的 CPU 上, 避免高昂的 缓存验证, 这个会出现在, 当处理被放到其它的 CPU
+上的时候出现.</p>
+
+<p>结论是, 有报告, 可以提升 24% 的情况.
+Doing this ensures that the data loaded into the CPU cache by the interrupt handler can
+be used (without invalidation) by the process; extremely high cache locality is achieved.</p>
+
+<h3>oprofile</h3>
+<p>oprofile is a system wide profiler that can profile both kernel and application level code. There is a kernel driver for oprofile which generates collects data in the x86′s Model Specific Registers (MSRs) to give very detailed information about the performance of running code. oprofile can also annotate source code with performance information to make fixing bottlenecks easy. See oprofile’s homepage for more information.</p>
+
+<p><pre>
+Kernel options: CONFIG_OPROFILE=y and CONFIG_HAVE_OPROFILE=y
+</pre>
+</p>
+
+<h3>epoll</h3>
+<p>epoll(7) is useful for applications which must watch for events on large numbers of file descriptors. The epoll interface is designed to easily scale to large numbers of file descriptors. epoll is already enabled in most recent kernels, but some strange distributions (which will remain nameless) have this feature disabled.</p>
+
+<p><pre>
+Kernel option: CONFIG_EPOLL=y
+</pre>
+</p>
+
+<h3>Conclusion</h3>
+<p>There are a lot of useful levers that can be pulled when trying to squeeze every last bit of performance out of your system
+It is extremely important to read and understand your hardware documentation if you hope to achieve the maximum throughput your system can achieve
+You can find documentation for your kernel online at the Linux LXR. Make sure to select the correct kernel version because docs change as the source changes!</p>
+
+<h3>参考</h3>
+<p>&nbsp;<a href=http://timetobleed.com/useful-kernel-and-driver-performance-tweaks-for-your-linux-server/ >http://timetobleed.com/useful-kernel-and-driver-performance-tweaks-for-your-linux-server/</a>&nbsp;</p>

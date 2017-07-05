@@ -1,0 +1,49 @@
+<p></p>
+
+<h3>执行</h3>
+<p><pre>
+LD_PRELOAD=/tmp/libtcmalloc.so.4 HEAPPROFILE=/tmp/p  HEAP_PROFILE_MMAP=1 HEAP_PROFILE_ALLOCATION_INTERVAL=209715200 nginx
+</pre>
+</p>
+
+<h3>生成 heap 文件</h3>
+<p>遇到的第一个问题就是无法生成 heap 文件.
+如果设置正确会有输出:
+<pre>
+Starting tracking the heap
+</pre>
+
+并马上就会输出一个 heap 文件.
+ 我当时总是在想是不是还没有达到 heap 的生成条件, 一直没有看到 heap 文件.</p>
+
+<p>原因是我使用的 tcmalloc 库是从一个机器上复制到线上的, 我不知道那个库是谁生成的.
+他好像是关闭了这个功能. 这个花了一些时间.</p>
+
+<h3>多进程</h3>
+<p>由于我要分析的是 nginx. 多个进程, 这样就要对于 heap 文件进行区分, 官方的文档里说是可以支持
+子进程, 会在输出的文件名里加入 pid. 但是实际上没有. 有人提出这个问题.
+&nbsp;<a href=https://github.com/gperftools/gperftools/issues/601 >https://github.com/gperftools/gperftools/issues/601</a>&nbsp;我按他的方法修改了代码可以正常输出我想要用的格式.</p>
+
+<h3>内存大小不对</h3>
+<p>终于得到了我想用的结果, 但是内存的大小好像不正常. 这我早有猜测, 应该是没有统计 mmap 的内存.
+增加参数. 官方的说明是 "If heap-profiling is on, also profile mmap, mremap, and sbrk".
+<pre>
+HEAP_PROFILE_MMAP=1
+</pre>
+</p>
+
+<h3>其它的参数</h3>
+<p>生成 heap 文件, 那么什么时候生成. 如何控制生成的周期.</p>
+
+<p><pre>
+HEAP_PROFILE_ALLOCATION_INTERVAL
+</pre>
+</p>
+
+<p>这个参数实现控制的. 默认的是 1G. 也就是程序的内存上升了 1G 就 dump 一次.</p>
+
+<p>还有一些相关的参数在:
+&nbsp;<a href=https://github.com/gperftools/gperftools/blob/7822b5b0b9fa7e016e1f6b46ea86f26f4691a457/src/heap-profiler.cc#L95 >https://github.com/gperftools/gperftools/blob/7822b5b0b9fa7e016e1f6b46ea86f26f4691a457/src/heap-profiler.cc#L95</a>&nbsp;</p>
+
+<h3>pprof</h3>
+<p>pprof 是一个 perl 脚本用于 heap 结果. 可以生成多种格式. text, svg 之类的. 也可以使用 raw 生成一个数据文件,</p>

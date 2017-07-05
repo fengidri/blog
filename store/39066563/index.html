@@ -1,0 +1,243 @@
+<p></p>
+
+<h3>前言</h3>
+<p>本文主要说明一下, ats 的fragment 的大小的问题. 这个问题关系到 ats 对磁盘的利用与管理方式.
+在对于这个进行了解的情况下, 可以有利于系统层面上的优化.</p>
+
+<h3>fragment</h3>
+<p>fragment 是 ATS 的磁盘处理单元. 每一个 Dir Enter 所指向的也就是一个 fragment.</p>
+
+<p> fragment 的大小通过 proxy.config.cache.target_fragment_size 设置. 这个值的选择是要考虑的.
+ 大一些, 会提升 I/O 效率, 但是会浪费空间. 目前的默认值是 1M.
+ 一个 fragment 里, 不只有我们的要保存的内容. fragment 的结构是如下:
+<pre>
+| Doc(72B) |CacheHTTPInfoVector| Data|
+</pre>
+</p>
+
+<p>第一个 fragment 的开头是一个 Doc 的数据结构. 如果是第一个 fragment, 还会有一个 CacheHTTPInfoVector,
+用于保存 HTTP 头信息. 之后才是用于保留数据.</p>
+
+<p>但是有另一种情况, 实际保存的 fragment 的大小并不是 1M 可能会大一点点. 后面会分析到.</p>
+
+<h3>Doc</h3>
+<p>我们先来看一下 Doc 的数据结构.
+<pre>
+struct Doc
+{
+  uint32_t magic;         // DOC_MAGIC
+  uint32_t len;           // length of this segment (including hlen, flen &amp; sizeof(Doc), unrounded)
+  uint64_t total_len;     // total length of document
+  INK_MD5 first_key;    // first key in document (http: vector)
+  INK_MD5 key;
+  uint32_t hlen;          // header length
+  uint32_t ftype:8;       // fragment type CACHE_FRAG_TYPE_XX
+  uint32_t _flen:24;       // fragment table length [amc] NOT USED
+  uint32_t sync_serial;
+  uint32_t write_serial;
+  uint32_t pinned;        // pinned until
+  uint32_t checksum;
+
+  uint32_t data_len();
+  uint32_t prefix_len();
+  int single_fragment();
+  int no_data_in_fragment();
+  char *hdr();
+  char *data();
+};
+
+</pre>
+
+不用太多的解释, 上面的注释已经足够了.</p>
+
+<h3>Dir</h3>
+<p>在读取一个对象的时候, 我们先是通过 cache id 找到对应的 Dir. 这里面会记录有对应的fragment 的 offset
+ 与 size.
+<pre>
+struct Dir
+{
+#if DO_NOT_REMOVE_THIS
+  // THE BIT-FIELD INTERPRETATION OF THIS STRUCT WHICH HAS TO
+  // USE MACROS TO PREVENT UNALIGNED LOADS
+  // bits are numbered from lowest in u16 to highest
+  // always index as u16 to avoid byte order issues
+  unsigned int offset:24;       // (0,1:0-7) 16M * 512 = 8GB
+  unsigned int big:2;           // (1:8-9) 512 &lt;&lt; (3 * big)
+  unsigned int size:6;          // (1:10-15) 6**2 = 64, 64*512 = 32768 .. 64*256=16MB
+  unsigned int tag:12;          // (2:0-11) 2048 / 8 entries/bucket = .4%
+  unsigned int phase:1;         // (2:12)
+  unsigned int head:1;          // (2:13) first segment in a document
+  unsigned int pinned:1;        // (2:14)
+  unsigned int token:1;         // (2:15)
+  unsigned int next:16;         // (3)
+  inku16 offset_high;           // 8GB * 65k = 0.5PB (4)
+#else
+  uint16_t w[5];
+  Dir() { dir_clear(this); }
+#endif
+};
+</pre>
+</p>
+
+<p>因为第一个缓存的对象都要有一个 Dir 与之对应, 并且这个结构是常驻在内存中的, 所以这个结构的设计很
+精细.</p>
+
+<h4>offset</h4>
+<p>offset 的实现由两部分组成 24 bits 与 16 bits. 这两部分的最大值分别是:
+(2 ** 24 -1) / 1024 / 1024 = 15.999M,
+(2 ** 16 -1) / 1024 = 64.999k.
+offset 指向的单元是磁盘上的块, 以 512 计算, 最大的可用的磁盘是 0.5PB.</p>
+
+<h4>size</h4>
+<p>这是一个点要申明的就是, Dir 里的 size 并不是指定的实际的 size, 而是一个大概的值, 一般这个值比实际的
+fragment 的size 要大, 这样的结果就依赖于 Dir 里的 size 读取的内容是必然要包含有 fragment 的,
+fragment 的实际大小是取自 Doc 里的值.</p>
+
+<p>这样的话, 就有一个问题, 我们从 Dir 里取出的 size 大于 实际的 fragment, 这样会形成空间的浪费.</p>
+
+<p>此外 size 的计算并不那么简单. 我们可以看看到 size 只有 6 位, 最大值是63.
+同时注意一下, 前面的那个问题, 为什么 size 只能表示一个大概的值呢?</p>
+
+<p>因为实际的 size 是通过如下的公式计算出来的:
+<pre>
+(size + 1 ) * 2 ^ ( ``CACHE_BLOCK_SHIFT`` + 3 * big )
+</pre>
+
+这里的 big 只有两位. CACHE_BLOCK_SHIFT 是 9;</p>
+
+<p>所以实际的 size 的值范围是这样的:
+<table>
+<tr><td>big </td><td>Multiplier </td><td>Maximum Size </td></tr>
+<tr><td>0	</td><td>512 (2^9)	 </td><td>32768 (2^15) 32K </td></tr>
+<tr><td>1	</td><td>4096 (2^12) (4K)	 </td><td>262144 (2^18) 256K</td></tr>
+<tr><td>2	</td><td>32768 (2^15)(32k) </td><td>2097152 (2^21) 2M </td></tr>
+<tr><td>3	</td><td>262144 (2^18)(256k) </td><td>	16777216 (2^24) 16M</td></tr>
+</table>
+</p>
+
+<h4>内存占用</h4>
+<p>Dir 常驻在内存中, 所以 DIR 的数量会影响内存的使用. 1G 的磁盘, 如果
+min_average_object_size 使用官方的 8000 就是会有 134217 个 Dir.
+占用的内存是 134217 * 10 大约是 1M.</p>
+
+<p>也就是说:
+<pre>
+1G = 1M.
+1T = 1G.
+</pre>
+</p>
+
+<h4>purge</h4>
+<p>出现这个错误的时候, 会比较讨厌, 进入死循环. 对于性能的影响很大. ats 无法分配到一个新的 Dir.
+ats 使用的 Dir 是在程序启动的时候分配好的. 分配的数量由磁盘的大小与一个估计的
+min_average_object_size 决定.</p>
+
+<p>我不明白的是:
+
+    <ul>
+
+        <li>为什么不直接占用其它的 Dir.
+
+        <li>为什么不放弃这个数据.进入一个死循环.
+
+        <li>为什么对于大文件, 不只使用一个 Dir. 而是要使用那多个 Dir, 每一个 fragment 对应一个 Dir.
+    </ul></p>
+
+<h3>write</h3>
+<p>缓存对应的操作无非就是读写. 在读取的过程中, 比较简单. 而实际的磁盘的结构是在写入的时间决定的.</p>
+
+<p>在 open_write 操作中, 设置 Dir, 并不会做一些实际的写入操作.</p>
+
+<p>写入的过程中会比较复杂, 涉及到很多的内容. 这里关注在写入的过程 fragment 是如何形成的.
+在写入的过程中, cache 部分的入口, 在open_write 之后, 就是通过 CacheVC 实现的.
+CacheVC 的处理函数就是 CacheVC::openWriteMain.</p>
+
+<p>如下分析一下这个函数.</p>
+
+<p><pre>
+int CacheVC::openWriteMain(int /* event ATS_UNUSED */, Event */* e ATS_UNUSED */)
+{
+  // 下面是一个使用goto 实现的循环, 这个用于标记是不是第一次进入循环, 调用 calluser.
+  int called_user = 0;
+Lagain:
+  if (!vio.buffer.writer()) {
+    if (calluser(VC_EVENT_WRITE_READY) == EVENT_DONE)
+      return EVENT_DONE;
+    if (!vio.buffer.writer())
+      return EVENT_CONT;
+  }
+  // CacheVC 上层的数据都已经处理完成了.
+  if (vio.ntodo() &lt;= 0) {
+    called_user = 1;
+    if (calluser(VC_EVENT_WRITE_COMPLETE) == EVENT_DONE) // 告诉销费都, 已经处理完成了
+      return EVENT_DONE;
+    if (vio.ntodo() &lt;= 0)
+      return EVENT_CONT;
+  }
+  int64_t ntodo = (int64_t)(vio.ntodo() + length);
+  int64_t total_avail = vio.buffer.reader()-&gt;read_avail();
+  int64_t avail = total_avail;
+  int64_t towrite = avail + length;
+  if (towrite &gt; ntodo) {
+    avail -= (towrite - ntodo);
+    towrite = ntodo;
+  }
+  if (towrite &gt; MAX_FRAG_SIZE) {
+    avail -= (towrite - MAX_FRAG_SIZE);
+    towrite = MAX_FRAG_SIZE;
+  }
+  if (!blocks &amp;&amp; towrite) {
+    blocks = vio.buffer.reader()-&gt;block;
+    offset = vio.buffer.reader()-&gt;start_offset;
+  }
+  if (avail &gt; 0) {
+    vio.buffer.reader()-&gt;consume(avail);
+    vio.ndone += avail;
+    total_len += avail;
+  }
+  length = (uint64_t)towrite;
+  // target_fragment_size 并不是我们在配置文件里设置的,
+  // 这里返回的值减去了 sizeofDoc.
+  if (length &gt; target_fragment_size() &amp;&amp;
+      (length &lt; target_fragment_size() + target_fragment_size() / 4))
+    write_len = target_fragment_size();
+  else
+    write_len = length;
+
+  // towrite 小于 fragment size 的时候是不会写入的. 但是有一种情况除外
+  // 处理尾部的一小断小于 fragment size 的数据的时候.
+  bool not_writing = towrite != ntodo &amp;&amp; towrite &lt; target_fragment_size();
+  if (!called_user) {// 在这个函数中第一次到达这里, 会进入这个函数
+    if (not_writing) { // 如果没有必要写入, 调用 calluser 先把当前的数据处理掉
+      called_user = 1;
+      if (calluser(VC_EVENT_WRITE_READY) == EVENT_DONE)
+        return EVENT_DONE;
+      goto Lagain;
+    } else if (vio.ntodo() &lt;= 0) // 要写入数据, 但是这些数据是整个对象的尾部
+      goto Lagain;
+  }
+  if (not_writing) // 没有必要写入的情况下, 直接退出
+    return EVENT_CONT;
+
+  if (towrite == ntodo &amp;&amp; f.close_complete) {
+    closed = 1;
+    SET_HANDLER(&amp;CacheVC::openWriteClose);
+    return openWriteClose(EVENT_NONE, NULL);
+  }
+  SET_HANDLER(&amp;CacheVC::openWriteWriteDone);
+  return do_write_lock_call(); // 写入数据
+}
+</pre>
+</p>
+
+<p>这里有一种情况, 会让实际的 fragment 大于设置的 1M. 当在处理最后的一小段数据的时候, 加上 avail
+实际的数据大于 fragment, 但是已经是最后的数据了, 那么就会直接调用 openWriteCloseHead. 这样 write_len 就会
+直接等于 length. 也就是不管最后有多少数据都会一次写入到一个 fragment 里.</p>
+
+<p>这样处理有其本身的意义, 没有必要增加一个 fragment, 这样会增加一次IO 操作. 但是会带来空间的上的浪费.</p>
+
+<h3>例子</h3>
+<p><pre>
+handleWrite: agg_len: 1048576 sizeofDoc: 72 write_len: 1040312 header_len: 2552 frag_len: 0 size: 1042936
+</pre>
+</p>

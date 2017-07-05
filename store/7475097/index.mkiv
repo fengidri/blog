@@ -1,0 +1,214 @@
+%Title: linux 进程管理和调度
+%Class: kernel
+%Post:1
+%
+%
+\def\unix{\bold{UNIX}}
+\def\linux{\bold{linux}}
+\section{进程的调度}
+进程的调度其实就是多任务与CPU 之间这种, 狼多肉少的情况下的一种资源分配方式.
+这种分配还有一个相对公平的实现目标.
+
+\section{进程的划分}
+如果进程之间是完全平等的那么, 进行调度也许就会非常简单.
+进程有我们知道的优先级划分还有关键度类别.
+
+这里先说明关键度的划分:
+\startitemize
+\item  {硬实时进程}
+           这种进程的任务要在指定的时限内完成. 由于linux 针对的情况不同, 所以是不支持这种进程的.
+           一些修改的版本里是支持这种情况的.
+\item {软件实时进程}
+            这些进程如果延时了并不会造成非常大的影响, 当然既然是这样要求的, 这样的进程如果延时也是
+            有不好的结果的. 但是内核会优先考虑这些进程的运行.
+\item {普通进程}
+            普通进程没有对于实时性要求不高.
+\stopitemize
+
+我们一般说的是普通进程. 并使用优先级对于普通进行进行划分.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+linux 中使用的进程调度是"抢占式多任务处理".
+
+一些要考虑的问题是:
+\startitemize
+\item  一些进程可能暂时不用使用CPU, 这个时候这些进程完全不应该运行.
+\item 进程有两种调度类别: 完全公平的调度与实时调度.
+\item 重要的进行就绪的时候, 要可以抢占当前进程.
+\stopitemize
+
+
+\section{进程的状态}
+
+进程可以分成四种状态: 运行,等待,睡眠,僵死 .  前面的三种没有什么多说的必要.
+
+重点在这里说一下僵死这种情况.
+这种情况的资源已经释放, 但是在进程表中还有对应的表项. 产生的原因是进程创建和销毁的方式.
+正常的程序退出要完成两步, 一是程序退出, 这个时候资源会释放掉. 二是父进程调用或已经调用了wait4. 这个系统调用会向内核证实父进程
+已经退出了从而释放内核中的资源. 如果父进程没有调用wait4, 则出现僵死进程.
+
+
+以上是进程的运行状态, 还有另一种进程状态: 用户状态和核心态. 这与另一个事实相对应. 现代的CPU 都至少有两种
+不同的执行状态. 一种是无限权利, 而另一种则受到各种限制. 一般而言进程是处于用户态的, 进程进入核心态
+有两种方法: 系统调用与中断.
+
+\section{进程表示}
+关心进程管理相关的程序是围绕结构体task_struct 建立的. 此结构体定义在include/sched.h 文件中.
+这个结构体从以下方面来描述一个进程:
+\startitemize
+\item  {状态和执行信息:} 如待决信号, 使用的二进制格式, 进程ID, 到父进程及其它相关的进程的指针, 优先级, 执行时间.
+\item {分配的虚拟内存}
+\item {进程身份凭据:} 用户 ID, 组ID, 权限等.
+\item {文件信息}
+\item {线程信息:} 记录进程特定于CPU 的运行时间
+\item {进程间通信有关信息}
+\item {进程的信号处理程序}
+\item {资源限制}
+\stopitemize
+
+\subsection{资源限制(resource limit, rlimit)}
+这个功能是利用task_struct 中的rlim数组 成员实现的.
+\starttyping
+<resource.h>
+struct rlimit{
+    unsigned long rlim_cur;
+    unsigned long rlim_max;
+}
+\stoptyping
+
+
+\startitemize
+\item  {rlim_cur} 进程当前的资源限制(软件限制)
+\item {rlim_max} 最大容许值(硬限制)
+\stopitemize
+
+系统调用setrlimit与getrlimits 用于处理这些设置.
+
+可以用下面的方法查看有哪些限制项:
+\starttyping
+feng >>> cat /proc/1006/limits
+Limit                     Soft Limit           Hard Limit           Units
+Max cpu time              unlimited            unlimited            seconds
+Max file size             unlimited            unlimited            bytes
+Max data size             unlimited            unlimited            bytes
+Max stack size            8388608              unlimited            bytes
+Max core file size        0                    unlimited            bytes
+Max resident set          unlimited            unlimited            bytes
+Max processes             31613                31613                processes
+Max open files            1024                 4096                 files
+Max locked memory         40960000             40960000             bytes
+Max address space         unlimited            unlimited            bytes
+Max file locks            unlimited            unlimited            locks
+Max pending signals       31613                31613                signals
+Max msgqueue size         819200               819200               bytes
+Max nice priority         30                   30
+Max realtime priority     65                   65
+Max realtime timeout      unlimited            unlimited            us
+\stoptyping
+
+\subsection{命名空间}
+这是一种虚拟化的轻量级的形式. 也是目前非常火的docker 的实现基础.
+不再于虚拟机的实现, 其本质是对于进程与资源的管理而不是对硬件的模拟.
+关注的是对于全局信息如PID 列表, 系统名称, 内核信息的抽象. 也就是实现系统的不同视图.每一项
+全局信息包装到容器的数据结构中去.
+
+命令空间可以是层次进行组织的, 父容器知道子命名空间的存在, 但子容器不了解其它容器的存在.
+如果命令空间包含的是比较简单的量, 也可以是非层次的如UTS命名空间.
+
+linux 对于简单的命令空间的支持已经有很长一段时间了, 主要是chroot 系统调用.
+
+命令空间的创建有两种方法:
+\startitemize
+\item  fork,  clone. 有特定的选项可以控制与父进程是共享命名空间还是新的命名空间.
+\item unshare 可以把进程的某部分从父进程分离, 其中包括命名空间.
+\stopitemize
+
+
+命名空间的实现要有两个部分:
+\startitemize
+\item 在每一个子系统中, 将此前的所有的全局组件包装到命名空间中
+\item  将给定的进程关联到所属各个命名空间的机制
+\stopitemize
+\img{http://i3.tietuku.com/b636c792a5852600.jpg}
+
+这个结构是比较有意思的, 如果简单考虑的话, 问题可能没有这样复杂.
+本是一个简单的多对多的情况, 为什么会出现三级关系呢?
+每一个进程指向一个命名空间就可以了, 但是为什么要增加一个struct_nsproxy.
+关键在于命名空间中的资源信息是分成两种情况的, 也就是说命名空间有两种一是用户命名空间, 另一个是
+UTS 命名空间. 所以这里不是简单的多对多的情况, 而是一侧是两层的情况. 所以使用了struct_nsproxy.
+
+UTS 是指 UNIX Timesharing System. 其中包含有内核的名称, 版本, 底层体系结构类型的信息.
+
+
+\subsection{进程 ID 号}
+在PID 之外还有一些别的ID 值. 这些ID 用于不同的应用场景:
+\startitemize
+\item  {线程组:} 线程组中的主进程是组长, 线程组中的所有的进程都有统一的线程组ID, 如果
+进程没有线程, 则其PID 与TGID 相同. 通过clone 创建的所有的线程的task_struct 的group_leader 成员,
+会指向组长的task_struct.
+
+\item {进程组:} 进程组成员的task_struct 的pgrp 属性值是相同的, 即是进程组组长的PID.
+       进程组简化了向组的所有成员发送信号的操作. 管道连接的进程包含在同一个进程组中.
+
+\item{会话:} 几个进程组可以合并成一个会话. 会话中的所有的进程有相同的会话ID. 保存在task_struct
+的session 成员中.
+\stopitemize
+
+
+命名空间的设计增加了PID 管理的复杂性. 由于层次的存在, 一个进程可能有多个PID. 所以这里有就有全局ID 与
+局部ID 的设计:
+\startitemize
+\item  全局ID: 是内核本身和初始命名空间中的唯一ID. 系统启动期间开始的init 进程属于初始空间. 这个空间中的ID
+是一全系统唯一的.
+\item 局部ID: 属于某个特定的命名空间.
+\stopitemize
+
+
+全局PID 与TGID是直接保存在task_struct 中. 会话ID 与 进程组ID 是保存在用于信号处理的结构中.
+
+\section{抢占模型}
+
+抢占模型决定哪些进程可以被抢占.
+\startitemize
+\item   普通进程总是可以被抢占.
+\item 如果是进程处于核心态, 则不能被其它进程抢占. 但是中断可以. 当然内核如果在有必要的时候可能会关闭所有的中断.
+\item 中断有最高的优先级.
+\stopitemize
+
+\def\fork{fork}
+\section{进程管理相关的系统调用}
+\subsection{进程复制}
+完成进程复制这一动作, 传统\unix 中的系统调用是fork. 而在linux下实现了三个.
+\startitemize
+\item  {fork}  相对是重量级的, 它建立父进程的完整副本, 然后做为子进程执行.
+当然这里自然有使用写时复制技术.
+
+\item {vfork} 这个感觉比较奇怪, 也不怎么常用, 特点在于不创建父进程的数据副本,
+同时居然是共享数据的, 当然这样做也有这样做的好处.
+
+那么为什么要设计这个方法呢? 它的设计是用于生成子进程后立即执行execve调用的情况,
+在这种情况下, 完全没有必然进行数据的复制.
+
+这里面有一个问题, 由于数据在子进程退出或调用execve之前是共享的, 那么如果
+与fork 一样父子进程同时运行, 就会造成数据的冲突, 所以内核会保证父进程
+在这个过程中处于堵塞状态.
+
+
+由于fork 使用了写时复制, vfork的优势就不明显了, 所以现在一般不使用它.
+
+\item {clone} 生成线程, 父子进程之间共享与复制进行比较精确的控制.
+\stopitemize
+
+
+\subsubsection{定时复制}
+这个名称的英文名: Copy-On-Write, COW.
+目的是防止执行fork时复制父进程的所有的数据.
+说到这里我们应该先说说, 为什么不能复制父进程的所有的数据呢?
+如果我们复制了所有的内核页, 这会使用了大量的内存空间, 同时这个动作
+会浪费很长的时间.  而如果你立即加载新的程序, 那么负面将就更加严重,
+之前的操作都是多余的了.  基于此才想出了一个新的接口vfork.
+
+
+
+\section{参考}
+\goto{深入linux内核架构}{}

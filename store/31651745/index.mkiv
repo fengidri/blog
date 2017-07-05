@@ -1,0 +1,65 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Title: BearCache
+%Class: BearCache
+%Post:0
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+
+\section{变量}
+\startitemize
+\item MEMOBJ_MAX_SIZE 10M
+\item NET_READ_MAX_SIZE 10M
+\item NET_READ_CHUNK_MAX_SIZE 2M
+\stopitemize
+
+\section{数据的写入}
+
+数据的写入过程,  数据的写入有两种情况, 一是知道大小的, 一是不知道大小的 chunks.
+\startitemize
+\item 调用 open_cache 返回 ctx.
+\item 网络读取: 从网络读取数据的时候, 完成头的读取之后, 使用 valloc 的读取 body.
+      在不知道总大小的情况下为了不多次申请内存, 网络这一块每次申请 NET_READ_CHUNK_MAX_SIZE 的数据空间.
+      在知道大小的情况下会可能数据很大, 但是每一次的读取最大的 buf 是 NET_READ_MAX_SIZE.
+
+\item cache_write 写入收到的数据, 收到数据立即写入到 MEM Cache.
+
+\item cache_write: 对于写入的数据是放到缓存里的, 不会写入到磁盘里. 对于来自网络的多个buf, mem cache
+ 使用链表进行串联.
+
+ \item 对于大文件: mem cache 中的每一个 obj 的大小是受到 MEMOBJ_MAX_SIZE 限制的.
+\stopitemize
+
+\section{Mem Cache}
+mem cache obj 并不对应于文件, 对应于文件的是 file.
+
+file 会记录一个文件的key, 存储形式.
+\starttyping
+struct cacheobj{
+    size_t offset;
+    size_t len;
+    bool   syc;
+    struct cacheobj *next;
+    char  *buf;
+};
+struct file{
+    sds key;
+    bool chunk;
+    struct file *next;
+    struct cacheobj head;
+};
+\stoptyping
+
+对于一个 cache 而言所有的 file 是串联起来的, 同时 cache 下会维护一个 dict 用于快速查找到这些 file.
+
+\section{信息同步}
+串联这些 file 的一个好处是当 cursor 到达一个 file 的 offset 的时候,  可以立即知道这个 file 的磁盘内容已经被挤掉了.
+而这些操作只在于内存中, 可能不会及时地反应到磁盘上. 为了解决这个问题,  cursor 要先申请一块磁盘空间, 并把这个值写入到磁盘头里,
+在这个范围内的 file 会被视为 stale, 不论内存里还是在磁盘上, 如果中间出现断电之类的场景导致数据丢失, 那也是这一块申请的的空间的内的东西丢失了.
+在申请的磁盘空间写完之后, 要把内存的数据都写入到磁盘上, 并更新 cursor.
+
+把信息写入到磁盘的过程可能会出现异常, 结果可能是灾难性的, 所以新的信息并不是直接对于旧的数据进行写入, 而是写一份新的数据, 在写完成之后把数据文件的名字进行
+重命名这个是一个原子性的操作. 从写入新文件到重命名这个过程都是可以出现异常的, 并不会引发任何问题.
+新的文件即使与旧的 cursor / alloc 对应也是没有关系的, 最坏的情况只是申请的数据空间那一部分数据丢失.
+最后一步是更新 head 里的 cursor. 完成更新之后, 就完成了数据的同步操作.
+
+对于信息的写入过程, 其实只要对于 alloc 对应的那一部分进行重新写入, 但这是后面要实现的.

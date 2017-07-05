@@ -1,0 +1,189 @@
+%title: ssh 工作机制
+%class: linux
+\section{SSH}
+SSH之所以能够保证安全，原因在于它采用了公钥加密。
+
+整个过程是这样的：
+\startitemize
+\item 远程主机收到用户的登录请求，把自己的公钥发给用户。
+\item 用户使用这个公钥，将登录密码加密后，发送回来。
+\item 远程主机用自己的私钥，解密登录密码，如果密码正确，就同意用户登录。
+\stopitemize
+
+这个过程本身是安全的，但是实施的时候存在一个风险：如果有人截获了登录请求，然后冒
+充远程主机，将伪造的公钥发给用户，那么用户很难辨别真伪。因为不像https协议，SSH协
+议的公钥是没有证书中心（CA）公证的，也就是说，都是自己签发的。 可以设想，如果攻
+击者插在用户与远程主机之间（比如在公共的wifi区域），用伪造的公钥，获取用户的登录
+密码。再用这个密码登录远程主机，那么SSH的安全机制就荡然无存了。这种风险就是著名
+的"中间人攻击"（Man-in-the-middle attack）。
+
+
+另一个问题是如果公钥被别人得到了怎么办? 一开始总是有这样的怀疑. 但是这正是这种方
+式的 '优美' 的地方.
+
+这里的关键在于对于用户的认证是通过登录密码进行的.关键在于发送这个密码,并不让别人
+知道. 而不对称加密的特点就是使用公钥加密之后只能通过私钥进行解密.
+
+
+\section{应用}
+看了\goto{ssh remote login}{http://www.ruanyifeng.com/blog/2011/12/ssh\_remote\_login.html}
+和\goto{ssh port forwarding}{http://www.ruanyifeng.com/blog/2011/12/ssh\_port\_forwarding.html}
+之后发现对于SSH的应用了解还是太少了.
+
+一个感想就是 SSH本身是一种协议, SSH 的关键是对于数据的传递.
+
+当我们使用SSH 登录之后进行一些操作.其实这个过程中, 很多动作与SSH 并没有关系, 多大是SSH
+Clinet 与SSH Server完成的一些额外的操作.
+
+\startitemize
+\item 比如我们输入了一个命令'ls'.
+\item SSH Clinet 通过 SSH 把这个命令发送到 SSH Server.
+\item SSH Server 在当前的环境时通过 shell 执行这个命令.
+\item 在执行的过程中把stdout, stderr 定向到SSH 通道. 把stdin 也定向到网络.
+\item 通过SSH 把结果返回到SSH Clinet.
+\item SSH Clinet 输出结果
+\stopitemize
+在这个过程中.只有通过SSH 传递数据才是真正与SSH 有关的内容.
+
+
+SSH 还有两种应用.直接在命令行使用命令. 使用SCP.
+直接在命令行使用这个过程与上面说的过程是样的.
+
+SCP 的过程也应该是这样的. 传递数据才是关键.
+\starttyping
+ $ ssh user@host 'mkdir -p .ssh && cat >> .ssh/authorized_keys' < ~/.ssh/id_rsa.pub
+将$HOME/src/目录下面的所有文件，复制到远程主机的$HOME/src/目录。
+　　$ cd && tar czv src | ssh user@host 'tar xz'
+
+将远程主机$HOME/src/目录下面的所有文件，复制到用户的当前目录。
+　　$ ssh user@host 'tar cz src' | tar xzv
+\stoptyping
+
+重定向与管道的作用是相似的. 登录远程执行命令后 输出与输入 在远程上就会重定向到网
+络.  我们从网络得到数据或是输出定向到网络. 这个过程实际上是数据的传递. 只要对于
+传递的数据使用对应的程序进行解释就可以了.
+
+记住: SSH 是一种传递数据的协议.
+
+
+
+\section{启发}
+这些内容给了我很大的启发.
+
+我在正找一种方法进行数据的传递. 由于不能使用SFTP. 所以只能使用SCP. 但是我可能要
+只传递指定的文件, 使用scp 只能是一个文件调用一次scp. 感觉这样效率不高.
+还有就是 如果远程上没有对应的目录, 还要考虑新建这些目录. 这些问题很多.
+
+现在想来是对于SSH 这种传递数据的本质没有理解. 把命令的执行与数据的传递混成了一团
+了.
+
+很好奇scp 是如何解决目录的问题的,就上网找了一下"ssh 复制 目录 原理", 就找到了上
+面的文章.`
+
+上面通过tar 进行文件的传递是一种很 '优雅' 的方法. 不但进行数据的压缩, 并使用了
+tar 对于压缩数据的处理能力. 是一种很完善的组合.
+
+我的CIR方案对于文件的传递我想已经有了很好的方案了.
+
+
+\section{疑问}
+我有一个想法. 形如:
+\starttyping
+　$ cd && tar czv src | ssh user@host 'tar xz'
+\stoptyping
+这种过程是如何的.
+1.  ssh 把远程stdin与本地的输入stdout, 连接.  tar xz收到的是通过之后的通道输入的
+.
+
+2.  ssh 程序接收了管道的输入, 把之前的 输出与 tar xz 合并在一起. 发送以远程上,
+执行命令.
+
+我在实践中, 新把ssh 开始在远程执行 tar xz, 通过再发送数据到远程. 远程收到之后做
+为tar xz的输入.  但是问题是tar 或是cat不能得到文件结束符. 这个是问题的关键.
+
+3. ssh收到了数据发送到远程, 远程通过管理传递数据到 tar
+
+所以第二种可能更大一些.
+
+在命令行里, 前一个tar是一个进程,后一个也是一个进程.这就出现了. 在前一个命令结束
+的时候, ssh 就收到了文件结束符.
+
+但是如果通过网络发送文件数据, 不能发送文件结束符.
+
+
+解决目前的问题有两个
+\startitemize
+\item 先发送文件对文件进行处理
+\item  把tar 命令与tar包的内容结合在起发送.
+\stopitemize
+但是第2种文件有问题, 命令行里太多不可视的字符.
+
+那么问题是:
+\startitemize
+\item 如何通过网络发送文件结束符.(这个好像是不能的, 网络上没有这个概念. 要学习有
+关于文件结束符的相关知识)
+\stopitemize
+
+
+在libssh2的接口中发现了int libssh2_channel_send_eof(LIBSSH2_CHANNEL *channel);
+这个就说明可以通过是可以通过 网络发送eof到远程的.
+
+\section{端口转发}
+端口转发本质是通过ssh加密把两台服务器的两个端口进行绑定.
+这句话的意思是说这是基于端口的, 但是绑定这个说法并没有清淅地表达两个端口之间的关系.
+
+结合一些端口的特性进行说明, 首先是client与sever进行ssh 连接. 一个端口在其中一端进行监听,
+会把所有的收到的数据转发到另一端, 由另一端转发给指定的端口.
+
+当监听的端口在client 上, 数据请求流向与ssh 连接相同, 这被称为本地转发.
+
+当监听的端口在server上, 数据请求流向与ssh 连接相反, 被称为远程转发.
+\subsection{本地转发}
+\starttyping
+ssh -L <local port>:<remote host>:<remote port> <SSH hostname>
+
+
+首先: 在主机A 上执行这个命令, 与主机B<SSH hostname> 进行ssh连接, 打通一个tunnel.
+并在A 上对于127.0.0.1:<local port> 进行监听. 收到包通过tunnel 发送到B上, B 发送
+到<remote host>:<remote port>
+\stoptyping
+\subsection{远程转发}
+\starttyping
+ssh -R <local port>:<remote host>:<remote port> <SSH hostname>
+\stoptyping
+
+\section{动态转发}
+
+上面的两种, 对于要进行转发的目的地是已知的, 但是如果目的地是不确定的呢. 这个时候
+就要动态转发了.
+\starttyping
+ssh -D <local port> <SSH Server>
+\stoptyping
+但是我们还是要知道转发的目的地址. 这时候只能由应用自己提供了, 这种方法就是sock要
+代理. ssh 可能支持socks4.
+
+如果SSH Server 也是使用localhost, 这个时候就相当于开始了一个代理服务器, 所有的机
+器都可以通过这个机器进行代理.
+
+
+在使用这个命令时, 我们可能会希望把它放到后台, 加上-f命令. 但是-f 命令又要求有一
+个命令能数, 这里没有, 那就加上-N.
+我一般使用下面的命令
+\starttyping
+ssh -qTfnN -D <local port> <SSH Server>
+\stoptyping
+
+\startitemize
+\item -q:  Quiet mode. 安静模式，忽略一切对话和错误提示。
+\item -T: Disable pseudo-tty allocation. 不占用 shell 了。
+\item -f: Requests ssh to go to background just before command execution. 后台运行，并推荐加上 -n 参数。
+\item -n: Redirects stdin from /dev/null (actually, prevents reading from stdin). -f 推荐的，不加这条参数应该也行。
+\item -N: Do not execute a remote command. 不执行远程命令，专为端口转发度身打造。
+\stopitemize
+
+\section{监听地址}
+出于安全, 在进行转发时监听的IP默认是127.0.0.1, 也就是说只能在本使用, 不能为别的
+机器进行代理.
+\starttyping
+-g: Allow remote hosts to connect to forwarded ports.
+\stoptyping

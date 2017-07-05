@@ -1,0 +1,370 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Title: tcp_sendmsg
+%Class: tcp
+%Post:1
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+tcp 的数据发送, 最张都会调用 tcp_sendmsg. tcp 层的数据发送, 是要由 tcp 完成
+切片的工作的, 而不同的 udp 要在 ip 层进行切片.
+
+主要分析 tcp_sendmsg 函数:
+
+\starttyping
+// 内核使用 msghdr 表示数据
+int tcp_sendmsg(struct kiocb *iocb, struct socket *sock, struct msghdr *msg,
+		size_t size)
+{
+
+    // 取出句柄的 flag, 主要看阻塞, 还是非阻塞
+	flags = msg->msg_flags;
+    // 取得发送的超时时间
+	timeo = sock_sndtimeo(sk, flags & MSG_DONTWAIT);
+
+	/* Wait for a connection to finish. */
+	if ((1 << sk->sk_state) & ~(TCPF_ESTABLISHED | TCPF_CLOSE_WAIT))
+		if ((err = sk_stream_wait_connect(sk, &timeo)) != 0)
+			goto out_err;
+
+	/* This should be in poll */
+  /*清除套接口发送缓冲队列已满的标志。
+    struct socket ->flags一组标志位，如下：
+         SOCK_ASYNC_NOSPACE：标识该套接口的发送队列是否已满。
+         SOCK_ASYNC_WAITDATA：标识应用程序通过recv调用时，是否在等待数据的接收。
+         SOCK_NOSPACE：标识非异步的情况下该套接口的发送队列是否已满。
+         SOCK_PASSCRED：用于标识是否设置了SO_PASSCRE套接口选项。
+         SOCK_PASSSEC：用于标识是否设置了SO_PASSSEC选项。*/
+	clear_bit(SOCK_ASYNC_NOSPACE, &sk->sk_socket->flags);
+
+    // 取出当前的 mss,
+    /*调用tcp_send_mss获取当前有效mss即mss_now和数据段的最大长度即size_goal。
+      在此传入是否标识MSG_OOB位，这是因为MSG_OOB是判断是否支持GSO的条件之一，而紧急数据不支持GSO。
+            mss_now:   当前的最大报文分段长度(Maxitum Segment Size)。
+            size_goal: 发送数据报到达网络设备时数据段的最大长度，该长度用来分割数据。
+                          TCP发送报文时，每个SKB的大小不能超过该值。
+    在不支持GSO的情况下，size_goal就等于mss_now，而如果支持GSO，则size_goal会是MSS的整数倍。
+    数据报发送到网络设备后再由网络设备根据MSS进行分割。*/
+	mss_now = tcp_send_mss(sk, &size_goal, flags);
+
+
+\stoptyping
+
+之后就循环处理 msg, msghdr 有可能有多个 buffer, 所以分成两层循环,
+一层是处理多个 buffer, 一层是对于 buffer 进行处理(切包或者组包)并发送给ip 层.
+
+\starttyping
+	/* Ok commence sending. */
+	iovlen = msg->msg_iovlen; // msg 中的 buffer 的数量
+	iov = msg->msg_iov;
+	copied = 0;
+
+    /*在开始分段前，初始化错误码为EPIPE，然后判断此时套接口是否存在错误，
+       以及该套接口是否允许发送数据，如果有错误或不允许发送数据，
+       则跳转到do_err处做出错处理。*/
+	err = -EPIPE;
+	if (sk->sk_err || (sk->sk_shutdown & SEND_SHUTDOWN))
+		goto out_err;
+
+
+  /*分段过程是由两个循环来控制的，外层循环控制是否所有用户数据块都已复制完成。
+    首先获取每个数据块的长度及指针，同时将数据块指针指向下一个数据块，为复制下一个数据块做准备。*/
+	while (--iovlen >= 0) { // 遍历 msg 中的 buffer
+		size_t seglen = iov->iov_len;
+		unsigned char __user *from = iov->iov_base;
+
+		iov++;
+        /*分段过程的内层循环控制每个数据块是否复制完成。*/
+		while (seglen > 0) {
+			int copy = 0;
+			int max = size_goal;
+
+            /*   max=size_goal=tp->xmit_size_goal, 表示发送数据报到达网络设备时数据段的最大长度，
+            该长度用来分割数据，TCP发送报文时，每个SKB的大小不能超过该值。
+            在不支持 GSO 情况下，xmit_size_goal就等于MSS；
+            而如果支持GSO，则xmit_size_goal会是MSS的整数倍。
+            数据报发送到网络设备后再由网络设备根据MSS进行分割。
+            */
+
+            /*获取传输控制块发送队列的尾部的那个SKB，因为只有队尾的那个SKB才有可能存在剩余空间的。*/
+			skb = tcp_write_queue_tail(sk);
+			if (tcp_send_head(sk)) {
+				if (skb->ip_summed == CHECKSUM_NONE)
+					max = mss_now;
+
+                /* 本次循环copy的数据长度。max是当前SKB的最大数据长度，
+                    skb->len是当前skb的数据长度，相减得到当前skb的剩余数据空间。*/
+				copy = max - skb->len;
+			}
+
+            /*copy小于等于0，说明当前SKB已使用空间大于等于size_goal，则需要分配新的SKB*/
+            if (copy <= 0) {
+new_segment:
+                /* Allocate new segment. If the interface is SG,
+                 * allocate skb fitting to single page.
+                 */
+              /* 判断发送队列中报文总长度是否已达到发送缓冲区的上限，如果超过，则只能跳到wait_for_sndbuf处理。*/
+                if (!sk_stream_memory_free(sk))
+                    goto wait_for_sndbuf;
+
+                /*开始alloc一个新的skb，alloc的大小一般都等于mss的大小，这里是通过select_size得到的。*/
+                skb = sk_stream_alloc_skb(sk,
+                             select_size(sk, sg),
+                             sk->sk_allocation);
+                if (!skb)
+                    goto wait_for_memory;
+
+                /*
+                 * Check whether we can use HW checksum.
+                 */
+                /* 根据目的路由网络设备的特性，确定是否设置由硬件执行校验和的标志。*/
+                if (sk->sk_route_caps & NETIF_F_ALL_CSUM)
+                    skb->ip_summed = CHECKSUM_PARTIAL;
+
+                /* 将该skb插入到发送队列的尾部。*/
+                skb_entail(sk, skb);
+
+                /*最后初始化copy变量为发送数据报到网络设备时的最大数据段的长度，copy表示每次复制到skb的数据长度。*/
+                copy = size_goal;
+                max = size_goal;
+            }
+
+            /* Try to append data to the end of skb. */
+            /*copy不能大于当前数据块剩余待复制的数据长度，如果大于，则需要调整copy的值。*/
+            if (copy > seglen)
+                copy = seglen;
+
+            /* Where to copy to? */
+            /*判断skb的线性存储区底部是否还有空间。*/
+            if (skb_tailroom(skb) > 0) {
+                /* We have some space in skb head. Superb! */
+              /*判断skb的线性存储区底部是否还有空间。如果还有，则进一步测试底部剩余空间是否小于copy，
+                如果是则再次调整待复制数据长度copy。
+                到此为止已经计算除了本次需要复制数据的长度，接下来调用skb_add_data从用户空间复制长度为copy的数据到skb中。
+                如果复制失败，则跳转到do_fault处。*/
+                if (copy > skb_tailroom(skb))
+                    copy = skb_tailroom(skb);
+                if ((err = skb_add_data(skb, from, copy)) != 0)
+                    goto do_fault;
+            } else {
+                /*如果 SKB 线性存储区底部已经没有空间了，那就需要把数据复制到支持分散聚合的分页中*/
+                /*merge  标识是否在最后一个分页中添加数据，初始化为0*/
+                int merge = 0;
+                /*获取当前SKB的分片段数，在skb_shared_info中用nr_frags表示。*/
+                int i = skb_shinfo(skb)->nr_frags;
+
+              /*通过宏TCP_PAGE获取最后一个分片的页面page。
+                通过宏TCP_OFF获取已复制数据尾端在最后一个分片的页面的页内偏移。
+                #define TCP_PAGE(sk) (sk->sk_sndmsg_page)
+                #define TCP_OFF(sk) (sk->sk_sndmsg_off)
+
+                sk_sndmsg_page：指向为本传输控制块最近一次分配的页面，通常是当前套接口发送队列中最后一个SKB的分片数据的最后一页。
+                sk_sndmsg_off:表示最后一页分片的页内偏移，新的数据可以直接从这个位置复制到该分片中。
+                */
+
+                struct page *page = TCP_PAGE(sk);
+                int off = TCP_OFF(sk);
+
+                /* 调用skb_can_coalesce()，判断SKB上最后一个分散聚合页面是否有效，
+                   即能否将数据添加到该分页上，如果可以则设置merge标志。*/
+                if (skb_can_coalesce(skb, i, page, off) && off != PAGE_SIZE) {
+                    /* We can extend the last page
+                     * fragment. */
+                    merge = 1;
+                } else if (i == MAX_SKB_FRAGS || !sg) {
+                  /*如果不能往最后一个分片内追加数据，则需要判断分片数量是否已达到上限，如果达到上限，则说明不能再往此SKB复制数据了，需要分配新的SKB。
+                    或者网络设备不支持分散聚合I/O，则也说明不能往分片复制数据。
+                    在这种情况下，对当前的TCP报文设置TCPHDR_PSH标志，并更新pushed_seq成员，表示到pushed_seq为止都是希望能尽快发送出去的。
+                    最后跳转到new_segment处，又开始分配新的SKB，因为数据还没复制完。*/
+                    /* Need to add new fragment and cannot
+                     * do this because interface is non-SG,
+                     * or because all the page slots are
+                     * busy. */
+                    tcp_mark_push(tp, skb);
+                    goto new_segment;
+                } else if (page) {
+                    /*最后一个分页中数据已经填满，且分页数量未达到上限。*/
+                    if (off == PAGE_SIZE) {
+                        put_page(page);
+                        TCP_PAGE(sk) = page = NULL;
+                        off = 0;
+                    }
+                } else
+                    /*到此处只剩下一种情况了，既不能在最后一个分页追加数据，又不能分配新的SKB，那么不管这个SKB是否存在分页，数据必定复制到分页起始位置。*/
+                    off = 0;
+
+                /*待复制的数据长度如果大于页面内剩余空间的长度，则调整待复制的数据长度copy。*/
+                if (copy > PAGE_SIZE - off)
+                    copy = PAGE_SIZE - off;
+
+                /*判断用于输出使用的缓存是否达到上限，一旦达到上限就只能等待，只有有可用输出缓存或超时为止。*/
+                if (!sk_wmem_schedule(sk, copy))
+                    goto wait_for_memory;
+
+              /*如果最后一个页面为空，一般是新分配的SKB，或者是前一次复制数据时一个页面分段刚好使用完，
+                那么就需要调用sk_stream_alloc()分配一个新的页面来存储数据。
+                如果分配失败则跳转到wait_for_memory处*/
+                if (!page) {
+                    /* Allocate new cache page. */
+                    if (!(page = sk_stream_alloc_page(sk)))
+                        goto wait_for_memory;
+                }
+
+                /* Time to copy data. We are close to
+                 * the end! */
+              /*此刻，SKB分页已准备好，调用skb_copy_to_page()将用户态的数据复制到分页中。
+                如果复制失败，则需要更新sk_sndmsg_page和sk_snd_off。因为虽然复制失败了，但是这个页面有可能是刚刚分配的，
+                因此需要记录以备下次复制时或者释放时使用。*/
+                err = skb_copy_to_page(sk, from, skb, page,
+                         off, copy);
+                if (err) {
+                    /* If this page was new, give it to the
+                     * socket so it does not get leaked.
+                     */
+                    if (!TCP_PAGE(sk)) {
+                        TCP_PAGE(sk) = page;
+                        TCP_OFF(sk) = 0;
+                    }
+                    goto do_error;
+                }
+
+                /* Update the skb. */
+                if (merge) {
+                    /*merge=1表示是在一个分页里复制数据，则更新有关分段的信息，即更新该页面内有效数据的长度。*/
+                    skb_shinfo(skb)->frags[i - 1].size +=
+                                    copy;
+                } else {
+                  /*如果是复制到一个全新的页面分段中，则需要更新的有关分段信息就会多一些，如分段数据的长度、页内偏移、分段数量等。
+                    调用skb_fill_page_desc()来完成。如果标识最近一次分配页面的sk_sndmsg_page不为空，则增加对该页面的引用。
+                    否则说明复制了数据的页面是新分配的，且没有使用完，在增加对该页面的引用的同时，还需更新sk_sndmsg_page的值。
+                    如果新分配的页面已使用完，就无须更新sk_sndmsg_page的值了，因为如果SKB未超过段上限，那么下次必定还会分配新的页面，
+                    因此在此处就省去了对off+copy=PAGE_SIZE这条分支的处理。*/
+                    skb_fill_page_desc(skb, i, page, off, copy);
+                    if (TCP_PAGE(sk)) {
+                        get_page(page);
+                    } else if (off + copy < PAGE_SIZE) {
+                        get_page(page);
+                        TCP_PAGE(sk) = page;
+                    }
+                }
+
+                /*由于复制了新的数据，需要更新数据尾端在最后一页分片的页内偏移。*/
+                TCP_OFF(sk) = off + copy;
+            }
+
+            /*如果复制的数据长度为零，则取消TCPHDR_PSH*/
+            if (!copied)
+                TCP_SKB_CB(skb)->flags &= ~TCPHDR_PSH;
+
+            /*更新发送队列中的最后一个序号write_seq，以及数据包的最后一个序列end_seq，初始化gso分段数gso_segs。*/
+            tp->write_seq += copy;
+            TCP_SKB_CB(skb)->end_seq += copy;
+            skb_shinfo(skb)->gso_segs = 0;
+            /*更新指向数据源的指针和已复制字节数。*/
+            from += copy;
+            copied += copy;
+            /*如果所有数据已全部复制到SKB中，则跳转到out处理。*/
+            if ((seglen -= copy) == 0 && iovlen == 0)
+                goto out;
+
+            /*如果当前SKB中的数据小于max，说明还可以往里填充数据，或者发送的是带外数据(MSG_OOB),则跳过以下发送过程，继续复制数据到SKB*/
+            if (skb->len < max || (flags & MSG_OOB))
+                continue;
+
+          /*检查是否必须立即发送，即检查自上次发送后产生的数据是否已超过对方曾经通告过的最大窗口值的一半。如果必须立即发送，
+            则设置TCPHDR_PSH标志后调用__tcp_push_pending_frames()，在发送队列上从sk_send_head开始把SKB发送出去。*/
+            if (forced_push(tp)) {
+                tcp_mark_push(tp, skb);
+                __tcp_push_pending_frames(sk, mss_now, TCP_NAGLE_PUSH);
+            } else if (skb == tcp_send_head(sk))
+                /*如果没有必要立即发送，且发送队列上只存在这个段，则调用tcp_push_one()只发送当前段。*/
+                tcp_push_one(sk, mss_now);
+            continue;
+
+/*套接口的发送缓存是有大小限制的，当发送队列中的数据段总长度超过发送缓冲区的长度上限时，就不能再分配SKB了，只能等待。
+  设置SOCK_NOSPACE标志，表示套接口发送缓冲区已满。*/
+wait_for_sndbuf:
+            set_bit(SOCK_NOSPACE, &sk->sk_socket->flags);
+/*跳到这里，表示整个系统内存不够*/
+wait_for_memory:
+          /*虽然分配SKB失败，但是如果之前有数据从用户空间复制过来，则调用tcp_push()将其发送出去。
+            其中第三个参数中去掉MSG_MORE标志，表示本次发送没有更多的数据了。
+            因为分配SKB失败，因此可以加上TCPHDR_PSH标志，第五个参数使用nagle算法，可能会推迟发送。*/
+            if (copied)
+                tcp_push(sk, flags & ~MSG_MORE, mss_now, TCP_NAGLE_PUSH);
+
+            // 调用sk_stream_wait_memory()进入睡眠，等待内存空闲的信号，
+            // 如果在超时时间内没有得到该信号，则跳转到do_error处执行。
+            // 如果是 noblock 的, 直接返回 EAGAIN 错误, 不等待.
+            if ((err = sk_stream_wait_memory(sk, &timeo)) != 0)
+                goto do_error;
+
+            /*等待内存未超时，有空闲内存可用。睡眠后，MSS有可能发生了变化，
+              所以重新获取当前的MSS和TSO分段段长，然后继续循环复制数据。*/
+            mss_now = tcp_send_mss(sk, &size_goal, flags);
+        }
+    }
+/*发送过程中正常的退出。*/
+out:
+    /*如果已有复制的数据，则调用tcp_push()将其发送出去，是否立即发送取决于nagle算法。*/
+    if (copied)
+        tcp_push(sk, flags, mss_now, tp->nonagle);
+    TCP_CHECK_TIMER(sk);
+    /*解锁传输控制块。*/
+    release_sock(sk);
+    /*返回已复制的字节数。*/
+    return copied;
+
+/*在复制数据异常时进入到这里。*/
+do_fault:
+    if (!skb->len) {
+        tcp_unlink_write_queue(skb, sk);
+        /* It is the one place in all of TCP, except connection
+         * reset, where we can be unlinking the send_head.
+         */
+        tcp_check_send_head(sk, skb);
+        sk_wmem_free_skb(sk, skb);
+    }
+
+do_error:
+    /*如果已复制了部分数据，那么即使发生了错误，也可以发送数据包，因此跳转到out处*/
+    if (copied)
+        goto out;
+out_err:
+    /*如果没有复制数据，则调用sk_stream_error()来获取错误码。然后对传输层控制块解锁后返回错误码。*/
+    err = sk_stream_error(sk, flags, err);
+    TCP_CHECK_TIMER(sk);
+    release_sock(sk);
+    return err;
+}
+
+\stoptyping
+
+
+一些其它的辅助函数:
+\starttyping
+static inline bool sk_stream_memory_free(const struct sock *sk)
+{
+    一般来说，分配一个struct sk_buff是用于存放一个tcp数据报， 其分配字节数应该是MSS+协议首部长度。
+    如: MSS值是1448，协议首部取最大长度 MAX_TCP_HEADER(224).
+    经数据对齐处理后，最后struct sk_buff的truesize 为1956。
+    也就是队列中每分配一个struct sk_buff，sk->sk_wmem_queued的值就增加1956。
+
+    //sk->sk_wmem_queued: 表示发送缓冲队列中已分配的字节数.
+    //sk->sk_rcvbuf、sk->sk_sndbuf  这两个值分别代表每个sock的接收发送队列的最大限制。
+    //在初始化的过程可以看到:
+	//         sk->sk_sndbuf = sysctl_tcp_wmem[1];
+	//         sk->sk_rcvbuf = sysctl_tcp_rmem[1];
+
+	if (sk->sk_wmem_queued >= sk->sk_sndbuf)
+		return false;
+
+	return sk->sk_prot->stream_memory_free ?
+		sk->sk_prot->stream_memory_free(sk) : true;
+}
+\stoptyping
+
+
+
+\section{参考}
+\goto{http://www.pagefault.info/?p=3}
+\goto{http://blog.csdn.net/scdxmoe/article/details/17764917}

@@ -1,0 +1,172 @@
+<p></p>
+
+<h3>介绍</h3>
+<p>除了作为一个 HTTP PROXY, Apache Traffic也是一个 HTTP 缓存.
+Apache Traffic能够缓存任何字节流, 虽然目前只支持通过 HTTP 协议的
+得到的字节流.
+这样的流(包括 HTTP 头)在缓存中被称为一个缓存对象.
+每一个对象通过一个全球唯一 的 &nbsp;<a href=https://docs.trafficserver.apache.org/en/latest/glossary.en.html#term-cache-key
+ >Cache Key</a>&nbsp;进行标记.</p>
+
+<p>本文件的目的是描述了Apache Traffic缓存的基本结构和实施细节。
+缓存的结构进行只了解内部机构所需要的程度的讨论。
+这份文件将是有益的主要Apache Traffic开发人员工作
+Apache Traffic的代码库或Apache Traffic插件。</p>
+
+<h3>Cache Layout</h3>
+<p>以下部分描述了高速缓存的持久性数据的结构。
+Traffic Server treats its persisent storage as
+an undifferentiated collection of bytes,
+assuming no other structure to it.
+In particular, it does not use the file system of the host
+operating system.
+If a file is used it is used only to mark out the set of bytes to be used.</p>
+
+<h4>Cache storage</h4>
+<p>原始存储Apache Traffic的缓存配置在storage.config。
+文件中的每一行定义了一个&nbsp;<a href=https://docs.trafficserver.apache.org/en/latest/glossary.en.html#term-cache-span >cache span</a>&nbsp;,
+每一个做为一个统一的持久性存储.</p>
+
+<p>这些存储组织到一组cache volumes, 这个定义在<b>volume.config</b>.
+这些是用于其它高级别的配置的单元.</p>
+
+<p>缓存卷可以通过总存储的百分比或存储的绝对大小来定义。
+默认情况下，为提高鲁棒性, 每个cache volumes跨所有的&nbsp;<a href=https://docs.trafficserver.apache.org/en/latest/glossary.en.html#term-cache-span >cache span</a>&nbsp;。
+一个高速缓存卷和一个缓存跨度的交点是一个高速缓存条纹。
+cache volumes和 &nbsp;<a href=https://docs.trafficserver.apache.org/en/latest/glossary.en.html#term-cache-span >cache span</a>&nbsp;的交点是&nbsp;<a href=https://docs.trafficserver.apache.org/en/latest/glossary.en.html#term-cache-span >cache stripe</a>&nbsp;.
+每一个&nbsp;<a href=https://docs.trafficserver.apache.org/en/latest/glossary.en.html#term-cache-span >cache span</a>&nbsp;被分成了&nbsp;<a href=https://docs.trafficserver.apache.org/en/latest/glossary.en.html#term-cache-span >cache stripe</a>&nbsp;, 而cache volumes是这些&nbsp;<a href=https://docs.trafficserver.apache.org/en/latest/glossary.en.html#term-cache-span >cache stripe</a>&nbsp;的集合.</p>
+
+<p>假设有如下的&nbsp;<a href=https://docs.trafficserver.apache.org/en/latest/glossary.en.html#term-cache-span >cache span</a>&nbsp;,
+<img src=http://i1.tietuku.com/f7386b7838c61c57.png >而cache volumes定义如下:
+<img src=http://i1.tietuku.com/9864d2560b6381e4.png >那么真实的layout 如下:
+<img src=http://i1.tietuku.com/775be53e4a2e2d9a.png >
+&nbsp;<a href=https://docs.trafficserver.apache.org/en/latest/glossary.en.html#term-cache-span >cache stripe</a>&nbsp;是缓存中执行的基本单位。
+一个缓存对象被整个缓存在一个单独的&nbsp;<a href=https://docs.trafficserver.apache.org/en/latest/glossary.en.html#term-cache-span >cache stripe</a>&nbsp;, 因此
+也就是在一个单独的&nbsp;<a href=https://docs.trafficserver.apache.org/en/latest/glossary.en.html#term-cache-span >cache span</a>&nbsp;.
+缓存对象从来不会跨&nbsp;<a href=https://docs.trafficserver.apache.org/en/latest/glossary.en.html#term-cache-span >cache span</a>&nbsp;或cache volumes进行分割.
+对象会基于URL 的 hash 值进行自动分配到一个&nbsp;<a href=https://docs.trafficserver.apache.org/en/latest/glossary.en.html#term-cache-span >cache stripe</a>&nbsp;,
+(同时反过来也是一个cache volumes), 这个hash 值也会用于对于对象进行取回.
+也可以在<b>hosting.config</b>中配置这个行为的范围. 这个支持从指定的hosts
+或 domain 的内容被缓存到指定的cache volumes.
+从版本4.0.1 开始, 可以控制cache volumes包含指定的&nbsp;<a href=https://docs.trafficserver.apache.org/en/latest/glossary.en.html#term-cache-span >cache span</a>&nbsp;或&nbsp;<a href=https://docs.trafficserver.apache.org/en/latest/glossary.en.html#term-cache-span >cache stripe</a>&nbsp;.</p>
+
+<p>由<b>storage.config</b>, <b>cache.config</b>进行指定
+&nbsp;<a href=https://docs.trafficserver.apache.org/en/latest/glossary.en.html#term-cache-span >cache span</a>&nbsp;和cache volumes和&nbsp;<a href=https://docs.trafficserver.apache.org/en/latest/glossary.en.html#term-cache-span >cache stripe</a>&nbsp;layout 结构
+在每一次 <b>traffic_server</b>重新启动的时候会重新计算.
+所以对于这些文件的修改都会废掉这些缓存中的内容.</p>
+
+<h3>Stripe Structure</h3>
+<p>Traffic Server treats the storage associated with a cache stripe as an undifferentiated span of bytes.
+在内部每个&nbsp;<a href=https://docs.trafficserver.apache.org/en/latest/glossary.en.html#term-cache-span >cache stripe</a>&nbsp;几乎完全独立。
+本节所描述的数据结构在每一个&nbsp;<a href=https://docs.trafficserver.apache.org/en/latest/glossary.en.html#term-cache-span >cache stripe</a>&nbsp;中是一样的.
+内部术语<b>volume</b>用于这些&nbsp;<a href=https://docs.trafficserver.apache.org/en/latest/glossary.en.html#term-cache-span >cache stripe</a>&nbsp;主要的实现在类<b>Vol</b>中.
+用户理解的 volume (本文中称为 cache volume) 是由<b>CacheVol</b>代表.</p>
+
+<p><b>注意:</b>&nbsp;<a href=https://docs.trafficserver.apache.org/en/latest/glossary.en.html#term-cache-span >cache stripe</a>&nbsp;的分配必须在对对象进行处理之前,
+因为directory&nbsp;<a href=https://docs.trafficserver.apache.org/en/latest/glossary.en.html#term-cache-span >cache stripe</a>&nbsp;本地的. 当&nbsp;<a href=https://docs.trafficserver.apache.org/en/latest/glossary.en.html#term-cache-span >cache stripe</a>&nbsp;修改, 对应的&nbsp;<a href=https://docs.trafficserver.apache.org/en/latest/glossary.en.html#term-cache-span >cache stripe</a>&nbsp;上
+的所有的 cache objects 都会丢失, 因为这些object 的directory不可能在新 的
+&nbsp;<a href=https://docs.trafficserver.apache.org/en/latest/glossary.en.html#term-cache-span >cache stripe</a>&nbsp;里找到.</p>
+
+<h3>Cache Directory</h3>
+<p>在&nbsp;<a href=https://docs.trafficserver.apache.org/en/latest/glossary.en.html#term-cache-span >cache stripe</a>&nbsp;中的内容通过directory进行跟踪. 每一个directory元素都是一个
+&nbsp;<a href=https://docs.trafficserver.apache.org/en/latest/glossary.en.html#term-directory-entry >directory entry</a>&nbsp;, 由于类<b>Dir</b>实现.
+每一个 &nbsp;<a href=https://docs.trafficserver.apache.org/en/latest/glossary.en.html#term-directory-entry >directory entry</a>&nbsp;指向缓存存储中的一个相邻的块.
+这在不同的地方被称为不现的东西: fragments, segments, docs, documents 等.
+本文使用<b>fragment</b>这个术语, 因为在代码中也大量使用这个.
+而术语<b>Doc</b>则被用于指向fragment的头域.
+总的来说, directory 被作为一个hash ID key.
+后面会讲到 cache ID 是如何用来定位 &nbsp;<a href=https://docs.trafficserver.apache.org/en/latest/glossary.en.html#term-directory-entry >directory entry</a>&nbsp;.
+缓存ID一般从cache key 计算的. 而其默认情况下是内容的URL。</p>
+
+<p>&nbsp;<a href=https://docs.trafficserver.apache.org/en/latest/glossary.en.html#term-directory-entry >directory entry</a>&nbsp;常驻在内存中, 所以一个&nbsp;<a href=https://docs.trafficserver.apache.org/en/latest/glossary.en.html#term-directory-entry >directory entry</a>&nbsp;要足够小(当前是10 bytes).
+所以对于存储的数据有一些限制. 好处是对于缓存没有命中的情况下都不用进行
+IO 操作. 这是很大的性能提升.</p>
+
+<p>&nbsp;<a href=https://docs.trafficserver.apache.org/en/latest/glossary.en.html#term-directory-entry >directory entry</a>&nbsp;总是完全大小的. 一旦&nbsp;<a href=https://docs.trafficserver.apache.org/en/latest/glossary.en.html#term-cache-span >cache stripe</a>&nbsp;被初始化, &nbsp;<a href=https://docs.trafficserver.apache.org/en/latest/glossary.en.html#term-directory-entry >directory entry</a>&nbsp;的大小
+就会被设定, 并且不再修改.
+这个大小与&nbsp;<a href=https://docs.trafficserver.apache.org/en/latest/glossary.en.html#term-cache-span >cache stripe</a>&nbsp;的大小相关(大约是线性的关系).
+正是由于这个原因Apache Traffic的内存占用量强烈依赖于磁盘缓存的大小。
+因为&nbsp;<a href=https://docs.trafficserver.apache.org/en/latest/glossary.en.html#term-directory-entry >directory entry</a>&nbsp;的大小不能修改, 也没有这个内存需要, 所以Apache Traffic不会消耗更
+多的内存, 更多的内容会保存在cache 上.
+ If there is enough memory to run Traffic Server with an empty cache there is enough to run it with a full cache.</p>
+
+<p>在&nbsp;<a href=https://docs.trafficserver.apache.org/en/latest/glossary.en.html#term-cache-span >cache stripe</a>&nbsp;每一个entry 保存一个offset 和一个 size.
+保存&nbsp;<a href=https://docs.trafficserver.apache.org/en/latest/glossary.en.html#term-directory-entry >directory entry</a>&nbsp;在中的size 是一个approximate size, 这是一个至少
+和fragment 中的真实的数据大小相同.
+Exact size 数据会保存在的硬盘的fragment 头.</p>
+
+<p><img src=http://i1.tietuku.com/30576f0c3338d032.png >
+<b>注意</b>: HTTP Headers 的检查不可能没有 I/O. 这包括了object 原始的 URL.
+而且, cache key 的保存并不明确, 所以不可能精确地查找到.</p>
+
+<p>directory 是一个 hash 表, 使用链表解决冲突. 因为每一个 entry 都很小,
+所以被直接当做链表的头.</p>
+
+<p>Chaining is implemented by imposing grouping structures on the entries in a directory. The first level grouping is a directory bucket. This is a fixed number (currently 4, defined as DIR_DEPTH) of entries. This serves to define the basic hash buckets with the first entry in each cache bucket serving as the root of the hash bucket.</p>
+
+<p><b>注意</b>: 术语桶在代码用以表示散列中的概念桶和在目录的结构分组机制。
+要根据情况进行区分.
+而不合理的地方在于, 这个术语<b>bucket</b>基本上都是用于表示分组机制.</p>
+
+<p>Directory buckets 被组织成segments. 在同一个&nbsp;<a href=https://docs.trafficserver.apache.org/en/latest/glossary.en.html#term-cache-span >cache stripe</a>&nbsp;上的 segments
+有相同数量的buckets. 一个&nbsp;<a href=https://docs.trafficserver.apache.org/en/latest/glossary.en.html#term-cache-span >cache stripe</a>&nbsp;上的 segments 的数量是被
+精确地选择过的, 所以每一个segment 可以有足够多的 buckets, 但是不能超过
+65535(2^16-1).
+<img src=http://i3.tietuku.com/207d6235d103d71f.png >
+每一个&nbsp;<a href=https://docs.trafficserver.apache.org/en/latest/glossary.en.html#term-directory-entry >directory entry</a>&nbsp;都有向前和向后的指针, 用于把同一个segment 里的
+&nbsp;<a href=https://docs.trafficserver.apache.org/en/latest/glossary.en.html#term-directory-entry >directory entry</a>&nbsp;连接起来.
+因为每一个 segment 的 buckets 数都不能超过 65535, 所以使用 16 个字节保存
+index 变量.
+&nbsp;<a href=https://docs.trafficserver.apache.org/en/latest/glossary.en.html#term-cache-span >cache stripe</a>&nbsp;头包含一组&nbsp;<a href=https://docs.trafficserver.apache.org/en/latest/glossary.en.html#term-directory-entry >directory entry</a>&nbsp;的指数. 用于指定所有的空的list 的 roots.
+活动项由 bucket 保存. 当&nbsp;<a href=https://docs.trafficserver.apache.org/en/latest/glossary.en.html#term-cache-span >cache stripe</a>&nbsp;初始化的时候, 每一个 bucket 中的
+第一个 entry 被标记为未使用, 而其它的所有的entry 会被放到对应的 segment
+在&nbsp;<a href=https://docs.trafficserver.apache.org/en/latest/glossary.en.html#term-cache-span >cache stripe</a>&nbsp;头里的空list 中.
+这意味着, 每一个 directory bucket 的第一个 entry 会做被
+hash bucket 的 root, 因此不用放到 free list 中而是标记为
+未使用.
+在 directory bucket 中的其它 entries 会优先添加到对应的 hash bucket
+但是这并不是的必须的.</p>
+
+<p>The segment free lists are initialized such that the extra bucket entries are added in order; all the seconds, then the thirds, then the fourths. Because the free lists are FIFOs, this means extra entries will be selected from the fourth entries across all the buckets first, then the thirds, etc. When allocating a new directory entry in a bucket the entries are searched from first to last, which maximizes bucket locality (that is, cache IDs that map to the same hash bucket will also tend to use the same directory bucket).</p>
+
+<p><img src=http://i1.tietuku.com/4edb93eb1aa73f2b.png ></p>
+
+<p>未完.......</p>
+
+<h3>需要注意的地方</h3>
+<p>数据结构的一般性分析.</p>
+
+<h4>气旋缓冲区</h4>
+<p></p>
+
+<h4>磁盘故障</h4>
+<p>缓存的设计是针对于磁盘故障的.
+因为每一个valume 里的每一个存储单元都是几乎独立的,
+磁盘损失意味着对应 <b>Vol</b>(使用这个存储单元的 volume) 对象不可用.
+主要的任务是更新 volume 分配表
+这主要在以下函数中完成:
+<pre>
+AIO_Callback_handler::handle_disk_failure
+</pre>
+</p>
+
+<h3>Directory Probing</h3>
+<p>Directory Probing是指基于 cache ID 在一个 stripe directory 中定位一个指定的
+directory entry. 这个行为主要在函数 dir_probe() 中完成的.
+这个函数会传递参数 Cache ID(key), stripe 对象 (d),
+和一个 last collision(last_collision). 最后的这个是一个
+in and out 参数.</p>
+
+<p>ID 的前一半(64位)是用于段索引, 取模于 directory 中的段总数.
+后一半用于作为 bucket 索引, 取模于每一个段中的 buckets 的总数.
+last_collision 用于指向最后一个符合的 entry.</p>
+
+<p>在计算出合适的 bucket 之后, 会在 bucket 中的 entries 中进行查找到合符的.
+这种情况下, 通过比较 cache id 的后 12 位得到合符的</p>
+
+<h3>Cache Write</h3>
+<p>写入到缓存是由类<b>CacheVC</b>的一个实例处理的.
+这是一个虚拟的连接, 接收数据并写入到缓存, 如同一个水池.</p>
+
+<h3>参数</h3>
+<p>本文翻译自&nbsp;<a href=https://docs.trafficserver.apache.org/en/latest/arch/cache/cache-arch.en.html >Cache Architecture</a>&nbsp;</p>

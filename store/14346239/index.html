@@ -1,0 +1,33 @@
+<p></p>
+
+<h3>Makefile</h3>
+<p>直接上这个Makefile. 注意这个文件的名字必然是Makefile.
+小写的是不行的.
+<pre>
+#
+# Makefile for kernel test
+#
+PWD         := $(shell pwd)
+KVERSION    := $(shell uname -r)
+#KERNEL_DIR   = /usr/src/linux-headers-$(KVERSION)/
+KERNEL_DIR   = /usr/lib/modules/$(KVERSION)/build
+MODULE_NAME  = mac
+obj-m       := $(MODULE_NAME).o
+all:
+	make -C $(KERNEL_DIR) M=$(PWD) modules
+clean:
+	make -C $(KERNEL_DIR) M=$(PWD) clean
+</pre>
+
+KERNEL_DIR 这个目录在不同的平台是可能是不同的.
+KERNEL_NAME 这个模块的名字. 如果只有一个文件的话,
+那么这个名字与C 文件的名字相同就好的.</p>
+
+<h3>日志</h3>
+<p>以前的的日志通过/var/log/message 就可以看了.
+但是systemd 中就比较麻烦了.
+<pre>
+journalctl -f
+</pre>
+
+可以显示最新的信息. 其它一些使用方法: &nbsp;<a href=https://wiki.archlinux.org/index.php/Systemd_%28%E7%AE%80%E4%BD%93%E4%B8%AD%E6%96%87%29 >systemd</a>&nbsp;</p>

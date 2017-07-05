@@ -1,0 +1,150 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Title: ATS - Transformations
+%Class: ats
+%Post:1
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\def\ts{Traffic Server}
+\def\tsdoc{Traffic Server Docuement}
+\def\nvcon{Network Vconnection}
+\def\vcon{VConnection}
+
+本文来自于对于 \tsdoc 的翻译.
+
+\section{Net Vconnections}
+\nvcon 是对于 TCP Scoket 的包装, 让 socket 可以在\ts 的 Vconnection 框架下
+进行工作.
+
+\section{Vconnections 视角}
+一个VConnection实施者只写入转换。%TODO
+所有的其它\vcon(net \vcon 和 cache \vcon) 都在 \bold{iocore} 中实施.
+如前面提到的，一个给定的vconnection具有很大的读取操作和写入操作。
+用户可以通过检查 \bold{TSVConnRead, TSVConnWrite} 的返回值, 来得到
+\vcon 上的操作的情况.
+
+反过来, 操作者可以通过检查 \bold{TSVConnReadVIOGet, TSVConnWriteVIOGet}
+的返回值, 来得到 VIO 的操作句柄. ( 而每一个\vcon 都是通过\ts 的API, 并且
+有 read VIO 和 write VIO, 即使它只支持读或写.
+
+例如在 null transform 插件中, 通过如下代码检查 input VIO:
+\starttyping
+input_vio = TSVConnWriteVIOGet (contp);
+\stoptyping
+这里的\bold{contp} 是transformation.
+
+一个\vcon 是一个延展, 这意味着它要有一个处理函数来处理收到的事件.
+这个处理函数的工作就是检查事件, 查看当前的 read VIO 与 write VIO 的状态.
+还有任何其它的内部状态, 以及得到当前的 IO 操作的进度.
+
+一般来说, 所有\vcon 的处理函数看起来是相似. 如下的代码段:
+
+\starttyping
+int
+vconnection_handler (TSCont contp, TSEvent event, void *edata)
+{
+if (TSVConnClosedGet (contp)) {
+        /* Destroy any vconnection specific data here. */
+        TSContDestroy (contp);
+        return 0;
+   } else {
+        /* Handle the incoming event */
+   }
+}
+\stoptyping
+这个基本的代码段显示了很多\vcon 只是在自身被关闭的情况要销毁自己.
+但是, 在这种情况下, 也许要求\vcon 做一些清理工作, 这就是为什么
+\bold{TSVConnClose}没有是只是简单地销毁\vcon.
+
+
+\vcon 是一个被收到的事件驱动的状态机. 当一个函数\bold{
+TSVConnRead, TSVConnWrite, TSVConnClose, TSVConnShutdown, or TSVIOReenable
+}被执行一个事件会被发送到这个\vcon.
+\bold{TSVIOReanable} 通过 VIO 结构间接引用到\vcon. \vcon 自身通过检查自身的状态
+还有自身的 VIO 的状态可以得知哪一个操作被执行.
+比如, 当\bold{TSVConnClose} 执行的时候, \vcon 会收到一个 immediate 事件(TS_EVENT_IMMEDIATE). 对于\vcon 收到的每一个状态, 要对于\vcon 的关闭标识进行检查, 来查看,
+当前的\vcon 是不是已经被关闭了.  相似的, 当\bold{TSVIOReanable} 被执行的时候,
+\vcon 会收到一个 immediate 事件. 对于每一个事件, \vcon 必须检查其 VIO, 来查看
+buffer 有没有被修改到一个可以进行操作的状态.
+
+最后, 一个\vcon 可能是另一个\vcon 的使用者. 它可能做为其它\vcon 的使用都收到
+事件. When it receives such an event, like TS_EVENT_VCONN_WRITE_READY, it might just enable another vconnection that’s writing into the buffer used by the vconnection reading from it. %TODO
+The above description is merely intended to give the overall idea for what a vconnection needs to do.
+
+
+\section{Transformation VConnection}
+\def\tf{transformation }
+\tf 是一个特殊的\vcon. 它支持的vconnection的功能，
+使一个或多个转换来被链接在一起的一个子集。
+\tf 位于输入数据源和输出数据接收器之间的瓶颈, 这使它能够查看和修改都通过它的数据.
+另外，一些转换只需扫描数据，并通过它。
+一个常见的转换是一个压缩的数据以某种方式。
+
+\tf 可以修改或者该数据流被发送到HTTP客户端（例如文档）或数据流从HTTP客户端（例如交数据）被发送。
+
+要做到这一点，\tf 应勾上下面钩之一：
+\startitemize
+\item TS_HTTP_REQUEST_TRANSFORM_HOOK
+\item  TS_HTTP_RESPONSE_TRANSFORM_HOOK
+\stopitemize
+
+请注意，由于一个\tf 密切地与一个给定的事务相关联，
+它是唯一可能在钩添加到事务钩 - 不是全局或会话挂钩。
+\tf 位于一个链中，所以他们的排序是很容易确定：即自己添加到链变革只是附加到它.
+
+
+数据被传进\tf 通过启动一个 \vcon 的写操作.
+作为该设计的结果，\tf 必须支持\vcon 写操作.
+就是说, 你的\tf 必须有一个上流的\vcon 写数据进来.
+\tf 必须读取数据, 消耗数据, 并告诉上流\vcon 结束了,
+通过发送 TS_EVENT_WRITE_COMPLETE 信号.
+\tf 不能发送 TS_EVENT_WRITE_COMPLETE 信号, 给上流的
+\vcon, 除非它消耗了所有的输入的数据.
+当TS_EVENT_VCONN_WRITE_COMPLETE 信号被过早地发出, 一些内部的
+\ts 数据结构不能正常释放, 并会导致内存泄漏.
+
+下面展示了如何保存所有的输入的数据被消耗掉了.
+
+\startitemize
+\item  在你读取或复制数据后, 确保你消耗了所有的数据, 并增加
+input VIO 的 ndone. 下面是 null-transform.c 中的例子:
+\starttyping
+TSIOBufferCopy (TSVIOBufferGet (data->output_vio), TSVIOReaderGet (input_vio), towrite, 0);
+/* Tell the read buffer that we have read the data and are no longer interested in it. */
+TSIOBufferReaderConsume (TSVIOReaderGet (input_vio), towrite);
+/* Modify the input VIO to reflect how much has been read.*/
+TSVIONDoneSet (input_vio, TSVIONDoneGet (input_vio) + towrite);
+\stoptyping
+
+\item 在发出 TS_EVENT_VCONN_WRITE_COMPLETE 之前, 你的\tf 应该
+通过\bold{TSVIONTodoGet(input_vio)} 检查 在上流的\vcon 写 VIO(input VIO)
+中剩余的字节数. 这个值应该变成0, 当所有的上流数据 被消费掉了.
+(TSVIONTodoGet = nbytes - ndone).
+在 TSVIONTodoGet 大于 0 的情况下, 不要发送 TS_EVENT_VCONN_WRITE_COMPLETE 信号.
+
+\item \tf 通过\bold{TSTransformOutputVConnGet} 得到 output \vcon,
+并把自身的数据传递给它. 紧接着 \ts 初始化 write 操作(其会传递数据进\tf).
+它会设置输出\vcon 到链路中的下一个\tf, 或到一个特殊的终端\tf(如
+这是链中最后一个\tf). 由于\tf 对于输出\vcon 有所有的权, 所以\tf
+在某一刻关闭它, 来释放内存.
+
+\item 所有链中的\tf 共享 transaction 的互斥锁.
+这个小的限制(由于\bold{TSTransformCreate}强制执行)减小了
+生成一般性\vcon 带来的锁并发的复杂性.
+例如，\tf 没有必要在进行写操作 VIO 前试图得到 write VIO 锁,
+因为它知道它已经拥有互斥锁。
+\stopitemize
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

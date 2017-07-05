@@ -1,0 +1,18 @@
+
+
+
+
+
+<h3>背景</h3>
+<p>其是新安装了系统要安装chromium-pepper-flash. 通过yaourt 进行安装的时候,发现一个问题一些数据的访问可能要进行代理. </p><p>我只有一个socks(sshd)代理. 这样自然就要一个http to socks 的工具了. </p><p>然后就发现了这个privoxy.
+
+<h3>privoxy</h3>
+<p>Privoxy是一款带过滤功能的代理服务器，针对HTTP、HTTPS协议。通过Privoxy的过滤功能，用户可以保护隐私、对网页内容进行过滤、管理cookies，以及拦阻各种广告等。Privoxy可以用作单机，也可以应用到多用户的网络。</p><p>Privoxy基于Internet Junkbuster，按照GNU General Public License进行发布。可以在Linux、Windows、Mac OS X、AmigaOS、BeOS，以及各种Unix上运行。</p><p>功能有很多方面, 代理转换只是其中一部分.它的代理实现比较全面. 可以是一个简单的http proxy 也可以把http proxy 转换成socks 代理.</p><p>我这里在/etc/privoxy/config 中增加下面的配置就可以了. 默认其监听的端口是8118<pre>forward-socks4a   /   127.0.0.1:7070 .
+</pre>
+<p></p>
+<ul>
+<li>'/' 是要进行forward 的url规则</li>
+<li>'127.0.0.1:7070' 是socks 代理服务</li>
+<li>'.' 表示通过socks 之后是否再进行代理转发. 这里表示没有再转发了.</li>
+</ul>
+<p>

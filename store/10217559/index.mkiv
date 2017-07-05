@@ -1,0 +1,743 @@
+%Title: 理解 SystemTap 的工作
+%Class: systemtap
+%Post:1
+%
+%
+\def\st{SystemTap}
+\def\ss{\st\ Script}
+\section{\st介绍}
+\st 是一个深入到内核的分析工具. 它可以分析通过插入钩子的方法来
+对于系统中的调用进行分析.
+
+
+\st 的核心思想是事件（event），以及给出处理该事件的句柄（Handler）。
+\st 会监控这些事件, 当一个特定的事件发生时，内核运行该处理句柄，
+就像快速调用一个子函数一样，处理完之后恢复到内核原始状态。
+\startitemize
+\item  事件（Event）：\st 定义了很多种事件，例如进入或退出某个内核函数、
+定时器时间到、整个\st会话启动或退出等等。
+\item  句柄（Handler）：就是一些脚本语句，描述了当事件发生时要完成的工作，
+通常是从事件的上下文提取数据，将它们存入内部变量中，或者打印出来。
+\stopitemize
+
+\st 工作原理是通过将脚本语句翻译成C语句，编译成内核模块。
+模块加载之后，将所有探测的事件以钩子的方式挂到内核上，当任何处理器上的某个事件发生时，相应钩子上句柄就会被执行。
+最后，当\st会话结束之后，钩子从内核上取下，移除模块。
+
+\section{架构}
+运行一个\st 脚本就意味着开启了一个session.
+这个session 会执行下面会的方法过程.
+
+
+
+
+\startitemize
+\item  \st 会检查脚本, 针对于在tapset 库中已经存在的tapset, \st会
+使用库中对应的定义来替代它. 这些库一般在/usr/share/\st/tapset
+
+\item \st 会把这些脚本翻译成C, 然后使用系统中的C 编译器来创建内核模块.
+
+\item 下面由\st-runtime中的staprun 把模块载入到的内核中, 并让钩子生效.
+
+\item 事件发生的时候, 对应的处理方法就会生效
+\item 一旦\st Session 结束了, 探头就会失效. 内核模块也会被unload.
+\stopitemize
+
+这一系列的运作都是一个单独的命令行工具stap进行驱动的. Stap 是\st 的主前端
+工具.
+
+
+\section{\st 脚本}
+在大多数情况下, \ss 脚本是一个\st\ session的基础.  \st 指导
+\st 收集什么样的信息, 一旦信息收集到了之后做什么.
+
+事件与处理方法的共同体被叫做probe(探针). 一个\st可以有很多个probe.
+
+一个probe的handle被称做"a probe body".
+
+对于应用程序的开发而言, 使用events 和handlers 与通过在程序的顺序
+执行指令中插入用于诊断的print 指令来分析代码的意义是相似的. 一旦程序
+运行起来, 这些用于诊断的print 指令可以让你看到命令的执行效果.
+
+而\st 脚本可以在不重新编译代码的情况下插入用于诊断的处理方法, 并且更加
+灵活.
+events 是handlers的触发器.
+
+\st 的脚本扩展名为.stp.  一个脚本中可以有多个probes. probes的格式如下:
+
+\starttyping
+probe	event {statements}
+\stoptyping
+脚本中每个probes支持多个事件, 多个events 之间使用逗号进行划分. 当一个probe
+同时指定的多个events, SystempTap 会在任何一个事件发生的情况下执行handler.
+
+每一个probe有一个对应的声明块. 这个声明块使用大括号进行闭合.
+包含有每个事情要执行的语句.
+ SystempTap 顺序执行这些语句, 多个语句之间专门的分离与终止语句通常是没有必要的.
+
+\st 脚本中的语句块的语法与语义与C 相似. 一个语句块可以被嵌入到另一个语句块中.
+
+
+\st 允许你编写函数来分解代码, 从而可以被多个probes使用. 所以相对于在多个语句块中
+重复编写代码, 你可以把这些指令放到一个函数中.
+
+\starttyping
+function function_name(arguments) {statements}
+probe event {function_name(arguments)}
+\stoptyping
+
+\subsection{Event}
+\st 事件可以概括地分成两类: 同步的与异步的.
+
+\subsubsection{同步事件}
+
+
+同步事件发生在任何程序执行一个内核代码中特定的位置对应的指令时. 这
+给个其它的事件一个参考点, 可以从这里获得上下文的数据.
+
+同步事件的例子:
+
+\startitemize
+\item   [syscall.system_call]
+
+这个指向是进行系统调用的事件. 增加一个.return是指向系统调用的退出.
+比如要指定系统调用close的entry和exit. 可以分别使用syscall.close和syscall.close.return.
+
+\item  [vfs.file_operation]
+
+这是虚拟文件系统(VFS) 的操作入口, 与syscall 相似增加一个.return会监控操作的exit.
+
+\item [kernel.function("function")]
+
+内核函数的入口. 比如kernel.function("sys_open")发生成内核函数sys_open被系统中的thread
+调用的时候. 如果想指向函数的返回, 可以在事件语句的后面加上.return如:
+kernel.function("sys_open").return
+
+当宣言一个探针事件的时候, 你可以使用(*) 做为一个通配符. 你也可以跟踪内核源文件中的
+一个函数的entry或exit. 考虑如下的例子:
+\starttyping
+probe kernel.function("*@net/socket.c") { }
+probe kernel.function("*@net/socket.c").return { }
+\stoptyping
+
+这个例子的分别监控了net/socket.c 中的所有的函数entry与exit. 注意由于handler是空的,
+所以没有信息会被收集和输出.
+
+\item [kernel.trace("tracepoint")]
+
+trace point的静态探针. 最近kernels(2.6.0 and newer) 包括一些特别的内核事件诊断.
+这些事件使用trace point 进行静态标记. 一个\st 中可以用到的例子是
+kernel.trace("kfree_skb")这个是每一次内核中network buffer  被释放的时候.
+
+\item [module("module").function("function")]
+
+允许你监控linux kernel 模块中的函数, 如:
+\starttyping
+probe module("ext3").function("*") { }
+probe module("ext3").function("*").return { }
+\stoptyping
+这个例子分别监控ext3 模块中的所有的函数的entry与exit.
+
+
+\stopitemize
+
+
+\subsubsection{异步事件}
+
+异步事件并不是指代码中特定的指令或位置. 这是主要由一系列由记数器, 定时器以及相似的结构
+组成的探针.
+
+
+\startitemize
+\item  {begin}
+
+指向\st\ session 启动. 因此脚本一运行就执行.
+
+\item {end}
+
+\st\ session结束.
+
+\item {timer events}
+
+事件指向的handler会被定期执行.
+
+\starttyping
+probe timer.s(4)
+{
+  printf("hello world\n")
+}
+\stoptyping
+这个探针会4s 输出一次.
+还有下面的事件:
+\startitemize
+\item  timer.ms(milliseconds)
+\item  timer.us(microseconds)
+\item  timer.ns(nanoseconds)
+\item  timer.hz(hertz)
+\item  timer.jiffies(jiffies)
+\stopitemize
+
+当与其它的探针相结合的时候, 定时器事件可以让你得到周期性的更新并且可以看出信息
+每一次是如何变化的.
+\stopitemize
+\section{基础的\st 句柄结构}
+\st 的句柄支持几种基本的结构.
+大多数这些处理结构的语法接近于C, awk. 这一节介绍几种常有的handler 结构.
+这将有助于你编写简单的\ss.
+
+
+\subsection{变量}
+在handler中可以自由地使用变量. 简单地选择一个变量名, 并把一个函数的返回值或
+一个表达式给它, 并且可以在一个表达式中使用它. \st 会自动根据它的值的类型
+判断它是一个字符还是一个整数. 比如: 你使用变量foo 表示gettimeofday_s()(形如:
+foo = gettimeofday_s()), 这样foo 会被识别为一个数字, 可以在printf() 中能过
+格式符(\%d) 打印出来.
+
+注意默认的情况下, 变量只能在当前的probe中使用了. 这意味着变量在每一个probe 的
+运行中被初始化, 使用, 销毁. 如果要在probe 之间使用一个变量, 要在probes 之外通过
+\bold{global}进行申明.
+
+\starttyping
+global count_jiffies, count_ms
+probe timer.jiffies(100) { count_jiffies ++ }
+probe timer.ms(100) { count_ms ++ }
+probe timer.ms(12345)
+{
+  hz=(1000*count_jiffies) / count_ms
+  printf ("jiffies:ms ratio %d:%d => CONFIG_HZ=%d\n",
+    count_jiffies, count_ms, hz)
+  exit ()
+}
+\stoptyping
+上面的代码通过定时器统计jiffies和milliseconds, 然后直接计算出内核的CONFIG_HZ 设置值.
+global 语句允许脚本使用变量count_jiffies和count_ms可以被probe timer.ms(12345) 使用.
+
+符号++ 用于变量的值自增1. 下面的代码中count_jiffies 用于自增1每100 jiffies.
+\starttyping
+probe timer.jiffies(100) { count_jiffies ++ }
+\stoptyping
+在这个例子中, \st 把count_jiffies 理解为一个整数. 因为没有这个变量没有初始化, 所以
+默认初始化为0.
+
+\subsection{目标变量}
+映射于代码中对应的真实位置的事件的探针(如: kernel.function("function") 和
+kernel.statement("statement"))允许使用\bold{target variables}
+来得到可见变量的值. 你可以使用-L 选项来列出探针中可用的目标变量.
+如果内核中有debug info. 你可以运行如下的命令来找到vfs_read 函数
+中的目标变量.
+\starttyping
+stap -L 'kernel.function("vfs_read")'
+\stoptyping
+这会得到如下的结果:
+\starttyping
+kernel.function("vfs_read@fs/read_write.c:277")
+$file:struct file* $buf:char* $count:size_t $pos:loff_t*
+\stoptyping
+
+以空格进行分割. 第一段是函数的位置. 每一个目标变量的描述以"\$"开头, 变量的
+类型跟在":"后面. 内核vfs_read在entry有如下的目标变量:
+\$file(指向文件描述符), \$buf(指向用于保存读取数据的用户空间内存), \$count
+(记录读取的字节数), \$pos(开始读取的位置).
+
+当一个目标变量对于探针而言不是一个本地变量, 如全局变量 或定义在另一个文件中的
+static 变量 都可以使用\bold{“@var("varname@src/file.c")”}.
+
+
+\st 可以追踪一个变量的输入信息还可以通过\bold{->}来检查一个结构体的域.
+\bold{->} 可以链式进行使用, 来查看包含在一个结构体数据中的结构体数据,
+也可以用于指针指向的其它数据结构体. \bold{->}可以得到结构体域的值.
+\bold{->} 操着并不区分是用于指向一个子结构的域还是通过指针指向的一个结构体的
+域.
+
+如得到定义在fs/file_table.c 中的静态的目标变量files_stat(它记录了
+当前文件系统中的一些可调参数). 可以如下:
+\starttyping
+stap -e 'probe kernel.function("vfs_read") {
+           printf ("current files_stat max_files: %d\n",
+                   @var("files_stat@fs/file_table.c")->max_files);
+           exit(); }'
+\stoptyping
+输出如下:
+\starttyping
+current files_stat max_files: 386070
+\stoptyping
+
+下面列出函数可以得到指向内核中基础类型(如整数, 字符串)的指针的值.
+这些函数的第一个参数都是指向数据项的.
+\startitemize
+\item  kernel_char(address) Obtain the character at address from kernel memory.
+\item kernel_short(address) Obtain the short at address from kernel memory.
+\item kernel_int(address) Obtain the int at address from kernel memory.
+\item kernel_long(address) Obtain the long at address from kernel memory
+\item kernel_string(address) Obtain the string at address from kernel memory.
+\item kernel_string_n(address, n) Obtain the string at address from the kernel memory and limits the string to n bytes.
+\stopitemize
+
+
+\subsubsection{优雅输出目标变量}
+\ss 经常用于观察代码中发生的事情. 很多时候只是打印出各个上下文中的变量是足够了.
+\st 生成了很多可用的方法可以把目标变量转换成可打印的字符串.
+\startitemize
+\item  \$\$vars
+
+        在探针中把一个scope中的变量扩展为一个字符串, 相当于\bold{
+        sprintf("parm1=\%x ... parmN=\%x var1=\%x ... varN=\%x", parm1, ..., parmN, var1, ..., varN)}
+
+\item \$\$locals
+
+        如同\$\$vars, 包含所有的本地变量.
+
+\item \$\$parms
+
+        如同\$\$vars, 包含所有的函数参数.
+
+\item \$\$return
+
+        只在return 探针中可以使用, 如果有返回值的话扩展成\bold{sprintf("return=\%x", \$return)}.
+        否则一个空字符串.
+
+
+
+\stopitemize
+
+下面是一个命令行脚本用于指印传递给vfs_read 的参数:
+\starttyping
+stap -e 'probe kernel.function("vfs_read") {printf("%s\n", $$parms); exit(); }'
+\stoptyping
+有四个参数传递到vfs_read: \bold{file, buf, count, pos}. \$\$parms 把传递到函数的参数
+生成一个字符串. 所有的参数除了\bold{count}参数都是指针.
+如下是一个输出的例子:
+\starttyping
+file=0xffff8800b40d4c80 buf=0x7fff634403e0 count=0x2004 pos=0xffff8800af96df48
+\stoptyping
+
+得到指针地址可能并没有什么用. 相对的数据结构的域可能更加有用.
+使用"\$"后缀可以优雅地打印数据结构. 下面的例子使用后缀的方式打印更多的数据结构更
+多的函数参数的信息.
+\starttyping
+stap -e 'probe kernel.function("vfs_read") {printf("%s\n", $$parms$); exit(); }'
+\stoptyping
+
+输出如下:
+\starttyping
+file={.f_u={...}, .f_path={...}, .f_op=0xffffffffa06e1d80, .f_lock={...}, .f_count={...}, .f_flags=34818, .f_mode=31, .f_pos=0, .f_owner={...}, .f_cred=0xffff88013148fc80, .f_ra={...}, .f_version=0, .f_security=0xffff8800b8dce560, .private_data=0x0, .f_ep_links={...}, .f_mapping=0xffff880037f8fdf8} buf="" count=8196 pos=-131938753921208
+\stoptyping
+
+使用"\$" 后缀, 组成一个数据结构的域并不会展开. "\$\$" 后缀会打印内嵌在数据结构中的值.
+下面是一个例子:
+\starttyping
+stap -e 'probe kernel.function("vfs_read") {printf("%s\n", $$parms$$); exit(); }'
+\stoptyping
+
+"\$\$" 后缀如同所有的字符串一样, 受到字符串最大长度的限制. 下面是一个
+输出, 它也因为字符大小的限制被截断了.
+
+
+\starttyping
+file={.f_u={.fu_list={.next=0xffff8801336ca0e8, .prev=0xffff88012ded0840}, .fu_rcuhead={.next=0xffff8801336ca0e8, .func=0xffff88012ded0840}}, .f_path={.mnt=0xffff880132fc97c0, .dentry=0xffff88001a889cc0}, .f_op=0xffffffffa06f64c0, .f_lock={.raw_lock={.slock=196611}}, .f_count={.counter=2}, .f_flags=34818, .f_mode=31, .f_pos=0, .f_owner={.lock={.raw_lock={.lock=16777216}}, .pid=0x0, .pid_type=0, .uid=0, .euid=0, .signum=0}, .f_cred=0xffff880130129a80, .f_ra={.start=0, .size=0, .async_size=0, .ra_pages=32, .
+\stoptyping
+
+\subsubsection{候选类型}
+
+
+在大多数情况下\st 可以从debug info中探测一个变量的类型.
+但是, 代码可能使用void 指针( 如内存分配的行为)还有就是输入信息不可得.
+还有就是一个探针的输入信息不能在一个函数中得到.
+\st 使用一个long 型来代替一个类型化的指针. \st's @cast可以用于指出对象的正确的类型.
+
+如下的函数返回long型数据task指向的task_struct中的域state的值.
+@cast的第一个参数task是指向对象的指针. 第二个参数对象的类型, "task_struct". 第三个参数
+列出了类型定义的文件并且是可选的. 使用@cast操作task_struct task各个域都是可以访问的.
+下面是一个例子:
+\starttyping
+function task_state:long (task:long)
+{
+    return @cast(task, "task_struct", "kernel<linux/sched.h>")->state
+}
+\stoptyping
+
+\subsubsection{检查目标变量可用性}
+随着代码的发展目标变量的可用性有可能改变.
+@defined 使探测到这个变更更加容易.
+@defined 提供了一个测试, 来查看指定的变量是不是可用.
+测试的结果可用于选择合适的表达.
+
+一些版本的内核函数被探测到有一个参数\$flags. 当可用的时候, \$flag 参数用于生成本地变量\bold{write_access}.
+被探测的没有\$flags参数的函数版本有一个\$write参数. 其用于代替本地变量\bold{write_access}.
+\starttyping
+probe vm.pagefault = kernel.function("__handle_mm_fault@mm/memory.c") ?,
+                     kernel.function("handle_mm_fault@mm/memory.c") ?
+{
+        name = "pagefault"
+        write_access = (@defined($flags)
+			? $flags & FAULT_FLAG_WRITE : $write_access)
+	address =  $address
+}
+\stoptyping
+
+\subsection{条件语句}
+
+一些情况下, \ss 脚本的输出也许很大. 为了解决这个问题, 你要进一步完善脚本的逻辑
+来分划探针输出成更加有关以及更加有用.
+
+为了达到这个目的可以在handlers中使用条件语句. \st 使用如下的条件语句.
+\startitemize
+\item  {if/else}
+
+格式如下:
+\starttyping
+if (condition)
+  statement1
+else
+  statement2
+\stoptyping
+
+如果\bold{condition} 表达不是0, \bold{statement1} 会被执行. \bold{statement2}
+会被执行如果\bold{condition} 是0. \bold{else} 子语句是可选的. \bold{statement1}
+与\bold{statement2}都是语句块.
+
+\starttyping
+global countread, countnonread
+probe kernel.function("vfs_read"),kernel.function("vfs_write")
+{
+  if (probefunc()=="vfs_read")
+    countread ++
+  else
+    countnonread ++
+}
+probe timer.s(5) { exit() }
+probe end
+{
+  printf("VFS reads total %d\n VFS writes total %d\n", countread, countnonread)
+}
+\stoptyping
+这个脚本用于统计5秒内多少虚拟文件系统读取(vfs_read) 和 写入(vfs_write) 被执行.
+当运行的时候, 如果探测到的函数的名字符合vfs_read(注意到: \bold{if (probefunc()=="vfs_read")})
+脚本会把变量countread 的值加1, 否则会增加\bold{countnoread} 加1.
+\item {While Loops}
+格式如:
+
+\starttyping
+while (condition)
+  statement
+\stoptyping
+只要\bold{condition} 不是0, \bold{statement} 语句块会被执行.
+\bold{statement} 一般是一个语句块, 并且必须改变\bold{condition} 的
+值, 让它最终变成0.
+
+
+\item {For Loops}
+格式如下:
+\starttyping
+for (initialization; conditional; increment) statement
+\stoptyping
+\bold{for} 循环就是一个速记的while 循环, 如下
+是对应的while 循环:
+\starttyping
+initialization
+while (conditional) {
+   statement
+   increment
+}
+\stoptyping
+
+
+
+\item { Conditional Operators}
+条件操作符, 就不多说了\bold{==}, \bold{>=}, \bold{<=}, \bold{!=}
+
+
+\stopitemize
+
+
+\subsection{命令行参数}
+
+\ss 可以使用\bold{\$}或\bold{@}紧接一个数字接受简单的命令行参数. 这两者的区别是, \bold{\$}
+用于接爱一个整数, 而\bold{@} 用于接受一个字符串.
+
+\starttyping
+probe kernel.function(@1) { }
+probe kernel.function(@1).return { }
+\stoptyping
+上面的例子, 让你可能通过命令行传递需要探测的内核函数(如: \bold{stap commandlineargs.stp kernel function}.
+你也可以指定脚本去接收多个命令行参数, 形如: @1, @2与用户输入的顺序相同.
+
+
+
+
+\section{关联数组}
+\st 还支持关联数组的使用. 一般一个普通的变量只代表一个单独的值, 而一个联想数组可以代表
+一些值的集合. 简单说来, 一个关联数组是一组互不相同的keys的集合,
+关联数组中的每一个key都有关联到其上的值.
+
+一般而言, 关联数组总是在多个探针中使用(后面会有展示), 它们应该被做为全局变量在\ss 中进行申明.
+获得关联数组中的元素的语法与\bold{awk} 相似.
+\starttyping
+array_name[index_expression]
+\stoptyping
+这里的array_name是一个任意的数组名. index_expression 用于指向数组中指定的唯一的key.
+
+举例来说, 让我们试着去构造一个名为foo 的数组包含三个人\bold{tom, dick, harry} 的年龄.
+分别设定三个的年龄为23, 24, 25. 我们可以使用如下的语句:
+\starttyping
+foo["tom"] = 23
+foo["dick"] = 24
+foo["harry"] = 25
+\stoptyping
+你可以通过逗号分开最多9个index用来同时设定值.
+这是很有用的, 当你希望key 包含有多种信息.
+下面的例子中使用5个元素做为key: 进程ID, 执行文件名, 用户ID, 父进程ID, 字符W.
+它们联合成一个key表示devname.
+\starttyping
+device[pid(),execname(),uid(),ppid(),"W"] = devname
+\stoptyping
+
+
+注意所有的关联数据必须做为全局变量进行申明, 无论它是在一个探针还是多个探针中使用.
+
+\section{\st 数组操作}
+这一节列举一些\st 中经常使用的操作.
+\subsection{分配关联的值}
+
+使用\bold{=}设置一个关联的值给唯一的key.如下:
+\starttyping
+array_name[index_expression] = value
+\stoptyping
+
+下面的例子展示了一个基础的例子如何为一个唯一的key设置对应的值. 你也可以
+使用一个handler 函数做为你的\bold{index_expression} 或\bold{value}. 比如
+你可以把一个时间做为值设置给一个进程名(任何你想使用的唯一的key).
+
+\starttyping
+foo[tid()] = gettimeofday_s()
+\stoptyping
+
+每当事件调用语句的时候, \st 返回适当的\bold{tid()}值.
+同时\st 也使用函数\bold{gettimeofday_s()}来设置对应的
+时间戳做为关联的值, 而\bold{tid()} 作为唯一的key. 这创建一个数据对,
+包含了线程ID 与时候戳.
+
+在这个例子中, 如果\bold{tid()} 返回一个已经数据\bold{foo} 中存在的
+key, 这个操作不会管, 这一点, 而是使用新的时候戳来代替它.
+
+\subsection{从数组中读取}
+如果对就的index 在数组中没有找对应的key, 默认会按对应操作返回数据0还是空字符串.
+
+\subsection{递增关联的值}
+\starttyping
+array_name[index_expression] ++
+\stoptyping
+
+
+\subsection{处理数组中的多个元素}
+当你在一个数组中收集了足够的信息的时候, 你会把数据取回并处理这些数据, 从而让这些数据真正有意义.
+
+最好的处理数组的键值对就的方法就是使用\bold{foreach}语句.
+
+\starttyping
+global reads
+probe vfs.read
+{
+  reads[execname()] ++
+}
+probe timer.s(3)
+{
+  foreach (count in reads)
+    printf("%s : %d \n", count, reads[count])
+}
+\stoptyping
+
+第二个探针里, \bold{foreach} 语句使用变量count来表示\bold{reads}中的key.
+而同一个探针中使用形如\bold{count}的方式引用这个key对应的值.
+
+你可以批示脚本处理这数据以一种指定的顺序通过\bold{+}升序或
+\bold{-}降序. 同时也还可以限制脚本重复处理的数量, 通过形如
+\bold{limit value} 的.
+
+如下是一个例子:
+\starttyping
+probe timer.s(3)
+{
+  foreach (count in reads- limit 10)
+    printf("%s : %d \n", count, reads[count])
+}
+\stoptyping
+
+\bold{foreach} 语法指定脚本按照\bold{reads}中的value的降序 的方式
+处理数组中的元素.
+\bold{limit 10 }这个选项指定了, \bold{foreach} 只处理开始的10 个元素.
+从值最大的开始.
+
+
+
+\subsection{清空/删除数组或其元素}
+有的时候, 你也许要清除数组元素对应的值, 或要清空整个数组, 为了可以
+在另一个探针中重新使用.
+
+为了做到这一点, 你要清空数组中积累的值. 你可以使用\bold{delete} 这个
+操作来做到删除数组的元素或整修数组.
+
+如下是一个例子:
+
+\starttyping
+global reads
+probe vfs.read
+{
+  reads[execname()] ++
+}
+probe timer.s(3)
+{
+  foreach (count in reads)
+    printf("%s : %d \n", count, reads[count])
+  delete reads
+}
+\stoptyping
+这里还有一个例子:
+\starttyping
+global reads, totalreads
+
+probe vfs.read
+{
+  reads[execname()] ++
+  totalreads[execname()] ++
+}
+
+probe timer.s(3)
+{
+  printf("=======\n")
+  foreach (count in reads-)
+    printf("%s : %d \n", count, reads[count])
+  delete reads
+}
+
+probe end
+{
+  printf("TOTALS\n")
+  foreach (total in totalreads-)
+    printf("%s : %d \n", total, totalreads[total])
+}
+\stoptyping
+
+\subsection{在条件判断中使用数组}
+你也可以在\bold{if} 中使用数组. 这很有用, 如果你想执行一个
+子程序断, 如果数组中的一个值合符一个特定的条件. 考虑下面的例子:
+\starttyping
+global reads
+probe vfs.read
+{
+  reads[execname()] ++
+}
+
+probe timer.s(3)
+{
+  printf("=======\n")
+  foreach (count in reads-)
+    if (reads[count] >= 1024)
+      printf("%s : %dkB \n", count, reads[count]/1024)
+    else
+      printf("%s : %dB \n", count, reads[count])
+}
+\stoptyping
+脚本统计每一个程序调用VFS read 的次数. 每三秒指印一次.
+如果对应的值大于等于1024, 就把输出的形式围成\bold{kB}的形式.
+
+你也可以测试一个特定的key 是不是数组中的成员.
+进一步, 可以在\bold{if} 中使用.
+\starttyping
+if([index_expression] in array_name) statement
+\stoptyping
+\starttyping
+global reads
+
+probe vfs.read
+{
+  reads[execname()] ++
+}
+
+probe timer.s(3)
+{
+  printf("=======\n")
+  foreach (count in reads+)
+    printf("%s : %d \n", count, reads[count])
+  if(["stapio"] in reads) {
+    printf("stapio read detected, exiting\n")
+    exit()
+  }
+}
+\stoptyping
+
+\bold{if(["stapio"] in reads) } 用于在\bold{stapio} 被加入到
+数组\bold{reads} 中的时候, 执行打印并退出.
+
+\subsection{计算统计总量}
+统计总量被用于基于一个数字的值进行收集数据收集信息. 这很重要在
+快速积累新的数据, 并且数据量很大的情况.
+(只用于收集, 聚合流数据).
+统计总量可以做为全局变量使用也可以做为数组中的元素.
+
+增加值到统计总量, 使用操作符\bold{<<< value}.
+
+
+\starttyping
+global reads
+probe vfs.read
+{
+  reads[execname()] <<< $count
+}
+\stoptyping
+
+操作符\bold{<<< \$count} 会保存\$count 对应的值为\bold{execname{}}
+在数组\bold{reads}中对应的关联的值.
+注意, 这些值被保存了, 没有被用于增加到每一个key的对应的值上, 也
+没有用来替换当前的值.
+从某些角度上来说, 可以认为每一个key有多个对应的值, 在每一个探针在工作的
+过程中.
+
+可以使用语法如\bold{extractor(variable/array index expression)} 来
+处理收集到的数据. 其中\bold{extractor} 可以是下面的一个:
+\startitemize
+\item  {count} 返回所有保存在变量或数组索引表达式值的数量.
+the expression @count(reads[execname()]) will return how many values are stored in each unique key in array reads.
+
+\item  {sum}
+返回保存在变量或数组索引中的数的和.
+
+\item  {min} 同上, 只是返回最小值.
+\item  {max} 你知道的, 返回最大值.
+\item  {avg} 这个就牛了是, 平均值.
+\stopitemize
+当你在使用统计总量的时候, 你也可以构造多索引的形式(最多5个).
+这是有用的, 这是有用的, 在一个探针里获取额外的上下文信息.
+如:
+\starttyping
+global reads
+probe vfs.read
+{
+  reads[execname(),pid()] <<< 1
+}
+probe timer.s(3)
+{
+  foreach([var1,var2] in reads)
+    printf("%s (%d) : %d \n", var1, var2, @count(reads[var1,var2]))
+}
+\stoptyping
+
+应该可以看明白吧!!!!
+
+
+\section{Tapsets}
+\def\ts{\bold{Tapsets}}
+\ts 是一个由编写的方便用于\ss 使用的探针与函数的脚本构成的库.
+当用户运行一个\ss, \st 会在\ts 中检查脚本的探针事件和handlers.
+\st 会在把脚本转换成C 之前载入对应的探针与函数.
+
+\ts 如\ss 一样使用\bold{.stp} 作为文件的扩展名一样,.
+默认的情况下, 标准的库会放到\bold{/usr/share/systemtap/tapset}.
+不同于\ss\ \ts 不可以直接运行. 它们形成库, 其他脚本可以使用定义.
+
+\ts 库是一个抽象层, 可以方便用户来定义事件和函数.
+\ts 提供用户想要作为事件指定的函数的别名. 知道这些别名, 对于很多
+情况下, 是很方便记忆的, 相对于内核函数, 特别是还要区分不同的内核版本.
+
+\section{参考}
+\goto{Understanding How SystemTap Works}{https://sourceware.org/systemtap/SystemTap_Beginners_Guide/understanding-how-systemtap-works.html}

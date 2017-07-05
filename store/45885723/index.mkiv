@@ -1,0 +1,135 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Title: Cache Directory
+%Class: ats
+%Post:1
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\def\dir{ \bold{Dir} }
+\def\dor{ \bold{Dor} }
+\def\fg{ \bold{fragments} }
+\def\db{Directory buckets}
+\def\seg{segments}
+
+\section{说明}
+Dir 类似于文件系统中的 inode. 其指向于磁盘上的一断连续的存储, 被称着 fragments.
+而 \fg 的结构中, 有一个头 Doc. 所有的 Dir 使用 Cache ID 生成的 hash 值来跟踪.
+
+\dir 是作为内存的常驻内容的, 这意味着\dir 的大小是受到限制的不能太多, 现在是设计是 10 字节.
+这意味着, 可以存在 \dir 的内存收到了一些限制. 同时也意味着, 对于 MISS 的状态, 是没有必要
+进行 IO 操作的, 这是一个很大的性能提升.
+
+另一点在于, 一个 stripe 只要初始化了, directory 的大小就定了, 不会修改.
+其大小与 stripe 的大小大致是线性的. 就是这个原因, 所以 ats 的内存占用与磁盘大小有关系.
+也因为, directory 的大小确定了, 不会再改变, 所以更多的内存保存到缓存, 并不会占用更多的内存.
+如果当缓存是空的时候, 内存可以让 ats 运行, 那么当缓存满的时候也可以运行.
+\img{http://cdn.fengidri.me/blog/cache-directory-structure.png}
+
+每一个\dir 保存有一个 offset 还有一个 size. \dir 中的 size 是一个近似的大小, 当然相对于
+\fg 的实际大小来说, 只大不小. 精确的数据 size 保存于 \fg 的头里.
+
+注意: 检查 HTTP 头的信息的时候, 必须要有磁盘 I/O, 包括 object 的 URL.
+
+整个 directory 是一个 hash 表, 使用链表的方式来解决冲突. 因为每一个 \dir 很小, 所以直接做为
+hash bucket 的链表的头.
+
+Chaining 的实现是通过对于 directory 中的 \dir 的结构进行组织实现的. 第一级的是 direcotry bucket.
+这是固定数量的 \dir(目前是 4 个, 使用宏 \bold{DIR_DEPTH} 定义). 这作为一个基础的 hash bucket,
+并且第一个 \dir 是这个 hash bucket 的 root.
+
+所有的\db 被组织进了 \seg. stripe 中的所有的 \seg 有相同数量的 buckets. stripe 中包含的
+\seg 的数量是指定的, 所以 \seg 中包含有尽可能多, 但是不越过 16384 的 bucket.
+
+\img{http://cdn.fengidri.me/blog/1461910024.8631.4020}
+
+每一个\dir 都有一个 next index 还有一个 previous index 用于链接同一个\seg 中的其它的\dir.
+因为一个\seg 下面的\dir 数量不会超过(2^16 -1 ), 所以 16 位的空间就可以用于保存 index value.
+在 stripe 的头里, 包含有由若干 \dir 索引组成的 array, 这些做为 free list 的 roots,
+每一个 \seg 有一个. 可用的 \dir 使用 bucket 结构进行保存. 当 stripe 进行初始化的时候,
+每一个 bucket 的 第一个 \dir 被初始为 0, 其它的 \dir 被放到对应的 \seg 下的 free list 中.
+这意味着, 每一个 \db 的第一个 \dir 作为 hash bucket 的 root, 所以被标记为 unused, 而不是
+放到 free list. bucket 中的其它 \dir 会被优先用于添加到相应的散列桶中, 但是这并不是必须的.
+\seg 的 free list 在初始化的时候, 其它的 \dir 被有序地, 增加进来, 先是所有的 seconds, 然后是
+所有的 thirds, 再然后是 所有的第四个. 当要在一个 bucket 中增加一个新的 \dir, 会在free list
+中从第一个, 查到最后一个, 这个时, 最大数的限制性就会发挥作用.
+
+\img{http://cdn.fengidri.me/blog/1461910077.19824.2498}
+
+\dir 会被从 free list 中删除, 当使用的时候. 如果不再使用了就会返回.
+当一个 fragment 有必要放到 directory 的时候, 使用 Cache ID  来定位 hash bucket.
+如果, bucket  中的第一个 \dir 还是未被使用的, 就使用它. 如果没有, 那么 bucket 中的其它的 \dir
+会被查找, 如果在 free list, 就会直接使用. 如果, 在没有找到, 就会使用 free list 中的第一个.
+这个 \dir 会被增加到这个 bucket 中.
+
+
+
+
+\section{dir_insert}
+\starttyping
+int
+dir_insert(const CacheKey *key, Vol *d, Dir *to_part)
+{
+  int s = key->slice32(0) % d->segments; // 得到当前的 segments index
+  int bi = key->slice32(1) % d->buckets; // 得到 segments 的 buckets index
+  int l;
+
+  Dir *seg = dir_segment(s, d); // 得到 segments 实例
+  Dir *b = dir_bucket(bi, seg); // 得到 buckets 的实例
+  Dir *e = NULL;
+  Vol *vol = d;
+
+Lagain:
+  // get from this row first
+  e = b;
+  if (dir_is_empty(e))
+    goto Lfill; // 找到一个空的
+  for (l = 1; l < DIR_DEPTH; l++) { // 在 bucket 里找
+    e = dir_bucket_row(b, l);
+    if (dir_is_empty(e)) { // 找到了
+      unlink_from_freelist(e, s, d); // 从 freelist 中删除
+      goto Llink;
+    }
+  }
+  // get one from the freelist
+  e = freelist_pop(s, d); // bucket 里的四个都已经被使用了, 直接使用 freelist 中的第一个
+  if (!e)
+    goto Lagain; // 没有找到就再找一次, 这样做的目的是什么? 不怕死循环吗? TODO
+Llink: // 放到 bucket 来
+  dir_set_next(e, dir_next(b));
+  dir_set_next(b, dir_to_offset(e, seg));
+Lfill:
+  dir_assign_data(e, to_part); // 复制数据
+  dir_set_tag(e, key->slice32(2));
+  ink_assert(vol_offset(d, e) < (d->skip + d->len));
+  DDebug("dir_insert", "insert %p %X into vol %d bucket %d at %p tag %X %X boffset %" PRId64 "", e, key->slice32(0), d->fd, bi, e,
+         key->slice32(1), dir_tag(e), dir_offset(e));
+  CHECK_DIR(d);
+  d->header->dirty = 1;
+  CACHE_INC_DIR_USED(d->mutex);
+  return 1;
+}
+\stoptyping
+
+
+问题是, 当整个磁盘都已经使用完了, 之后就应该是over write 了. 这里是如何实现的?
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

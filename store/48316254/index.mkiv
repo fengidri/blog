@@ -1,0 +1,37 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Title:matplotlib 手册
+%Class:
+%Post:1
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+输出格式化:
+\starttyping
+def size_fmt(s, pos = 0):
+    for f in 'BKMG':
+        if s < 1024:
+            break
+        s = s / 1024
+    else:
+        f = 'T'
+
+    return '%.1f%s' % (s, f)
+\stoptyping
+
+
+\startitemize
+\item 设置 X 轴的显示: plt.gca().xaxis.set_major_formatter(ticker.FuncFormatter(size_fmt))
+\item 设置 X 轴的步长: plt.gca().xaxis.set_major_locator(ticker.MultipleLocator(1024 * 64))
+
+\item  双 Y 轴
+\starttyping
+fig, left_axis=plt.subplots()
+right_axis = left_axis.twinx()
+\stoptyping
+\item 设置轴 label:
+\starttyping
+right_axis.set_ylabel('label')
+\stoptyping
+
+\item  设置 title: fig.suptitle('title')
+\item 设置图片大小: fig.set_size_inches(40, 10.5)
+\stopitemize

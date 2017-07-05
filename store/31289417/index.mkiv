@@ -1,0 +1,257 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Title: nginx upstream - read upstream
+%Class: nginx
+%Post:1
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+ngx_event_pipe_read_upstream@ngx_event_pipe 函数完成下面几个功能：
+这个函数有380 行, 真长啊.
+
+\startitemize
+\item 从preread_bufs，free_raw_bufs或者ngx_create_temp_buf寻找一块空闲的或部分空闲的内存；
+\item 调用p->upstream->recv_chain==ngx_readv_chain，用writev的方式读取FCGI的数据,填充chain。
+\item 对于整块buf都满了的chain节点调用input_filter(ngx_http_fastcgi_input_filter)进行upstream协议解析，
+比如FCGI协议，解析后的结果放入p->in里面；
+
+\item 对于没有填充满的buffer节点，放入free_raw_bufs以待下次进入时从后面进行追加。
+\item 当然了，如果对端发送完数据FIN了，那就直接调用input_filter处理free_raw_bufs这块数据
+\stopitemize
+
+
+
+\starttyping
+static ngx_int_t
+ngx_event_pipe_read_upstream(ngx_event_pipe_t *p) // 读取后端数据
+{
+    ......
+
+    for ( ;; ) {
+
+        // 没有预读的数据, 连接没有 ready, 直接退出
+        if (p->preread_bufs == NULL && !p->upstream->read->ready) {
+            break;
+        }
+
+        // 下面这一大块都是用于分配内存, 以保存后面的数据
+        if (p->preread_bufs) {// 之前有读取到过 body, 先对于这些数据进行处理.
+
+            /* use the pre-read bufs if they exist */
+
+            chain = p->preread_bufs; // 把这一块的数据拿走
+            p->preread_bufs = NULL;  // 清空
+            n = p->preread_size;
+
+            ngx_log_debug1(NGX_LOG_DEBUG_EVENT, p->log, 0,
+                           "pipe preread: %z", n);
+
+            if (n) {
+                p->read = 1;
+            }
+
+        } else {
+        // 在没有预读数据的情况下要找一块数据空间, 并接收数据
+
+            if (p->limit_rate) {
+                if (p->upstream->read->delayed) {
+                    break;
+                }
+
+                limit = (off_t) p->limit_rate * (ngx_time() - p->start_sec + 1)
+                        - p->read_length;
+
+                if (limit <= 0) {
+                    p->upstream->read->delayed = 1;
+                    delay = (ngx_msec_t) (- limit * 1000 / p->limit_rate + 1);
+                    ngx_add_timer(p->upstream->read, delay);
+                    break;
+                }
+
+            } else {
+                limit = 0;
+            }
+
+            if (p->free_raw_bufs) { // 在 free_raw_bufs 中查找空间
+
+                /* use the free bufs if they exist */
+                ......
+
+
+            } else if (p->allocated < p->bufs.num) { // 之前没的找到, 那么如果可以的申请内存
+
+                /* allocate a new buf if it's still allowed */
+                .......
+
+
+            } else if (!p->cacheable
+                       && p->downstream->data == p->output_ctx
+                       && p->downstream->write->ready
+                       && !p->downstream->write->delayed) // 不能缓存文件, 那就发一些给用户吧
+            {
+                /*
+                 * if the bufs are not needed to be saved in a cache and
+                 * a downstream is ready then write the bufs to a downstream
+                 */
+                 ......
+
+
+            } else if (p->cacheable
+                       || p->temp_file->offset < p->max_temp_file_size) // 可以的情况下, 把一些数据写入文件
+            {
+
+                /*
+                 * if it is allowed, then save some bufs from p->in
+                 * to a temporary file, and add them to a p->out chain
+                 */
+
+                rc = ngx_event_pipe_write_chain_to_temp_file(p);
+
+                ngx_log_debug1(NGX_LOG_DEBUG_EVENT, p->log, 0,
+                               "pipe temp offset: %O", p->temp_file->offset);
+
+
+            } else { // 不行的情况下退出
+                /* there are no bufs to read in */
+                break;
+            }
+
+            // 读取数据
+            n = p->upstream->recv_chain(p->upstream, chain, limit);
+
+            ngx_log_debug1(NGX_LOG_DEBUG_EVENT, p->log, 0,
+                           "pipe recv chain: %z", n);
+
+            if (p->free_raw_bufs) {
+                chain->next = p->free_raw_bufs;
+            }
+            p->free_raw_bufs = chain;
+
+            if (n == NGX_ERROR) {
+                p->upstream_error = 1;
+                return NGX_ERROR;
+            }
+
+            if (n == NGX_AGAIN) {
+                if (p->single_buf) {
+                    ngx_event_pipe_remove_shadow_links(chain->buf);
+                }
+
+                break;
+            }
+
+            p->read = 1;
+
+            if (n == 0) {
+                p->upstream_eof = 1;
+                break;
+            }
+        }
+
+        //******************** 这个时候已经得到一块数据 ********************
+
+        delay = p->limit_rate ? (ngx_msec_t) n * 1000 / p->limit_rate : 0;
+
+        p->read_length += n;
+        cl = chain;
+        p->free_raw_bufs = NULL;
+
+        while (cl && n > 0) {
+            //下面的函数将c->buf中用shadow指针连接起来的链表中所有节点的recycled,temporary,shadow成员置空。
+            ngx_event_pipe_remove_shadow_links(cl->buf);
+
+            size = cl->buf->end - cl->buf->last;
+
+            if (n >= size) {
+                cl->buf->last = cl->buf->end;
+
+                /* STUB */ cl->buf->num = p->num++;
+
+                // 调用协议的处理程序把收到的原始的数据转成响应格式
+                if (p->input_filter(p, cl->buf) == NGX_ERROR) {
+                    //整块buffer的调用协议解析句柄
+                    //这里面，如果cl->buf这块数据解析出来了DATA数据，那么cl->buf->shadow成员指向一个链表，
+                    //通过shadow成员链接起来的链表，每个成员就是零散的fcgi data数据部分
+                    return NGX_ABORT;
+                }
+
+                n -= size;
+                ln = cl;
+                cl = cl->next;// 处理下一块
+                ngx_free_chain(p->pool, ln);
+
+            } else {
+                cl->buf->last += n;
+                n = 0;
+            }
+        }
+
+        if (cl) {
+            for (ln = cl; ln->next; ln = ln->next) { /* void */ }
+
+            ln->next = p->free_raw_bufs;
+            p->free_raw_bufs = cl;
+        }
+
+        if (delay > 0) { // TODO 这是什么的?
+            p->upstream->read->delayed = 1;
+            ngx_add_timer(p->upstream->read, delay);
+            break;
+        }
+    }
+
+    if (p->free_raw_bufs && p->length != -1) {
+        cl = p->free_raw_bufs;
+
+        if (cl->buf->last - cl->buf->pos >= p->length) {
+
+            p->free_raw_bufs = cl->next;
+
+            /* STUB */ cl->buf->num = p->num++;
+
+            if (p->input_filter(p, cl->buf) == NGX_ERROR) {
+                 return NGX_ABORT;
+            }
+
+            ngx_free_chain(p->pool, cl);
+        }
+    }
+
+    if (p->length == 0) {
+        p->upstream_done = 1;
+        p->read = 1;
+    }
+
+    if ((p->upstream_eof || p->upstream_error) && p->free_raw_bufs) {
+    // 数据结束了, 或错误了, 处理一块不完整的数据
+
+        /* STUB */ p->free_raw_bufs->buf->num = p->num++;
+
+        if (p->input_filter(p, p->free_raw_bufs->buf) == NGX_ERROR) {
+            return NGX_ABORT;
+        }
+
+        p->free_raw_bufs = p->free_raw_bufs->next;
+
+        if (p->free_bufs && p->buf_to_file == NULL) {
+            for (cl = p->free_raw_bufs; cl; cl = cl->next) {
+                if (cl->buf->shadow == NULL) {
+                    ngx_pfree(p->pool, cl->buf->start);
+                }
+            }
+        }
+    }
+
+    if (p->cacheable && (p->in || p->buf_to_file)) {
+
+        ngx_log_debug0(NGX_LOG_DEBUG_EVENT, p->log, 0,
+                       "pipe write chain");
+
+        if (ngx_event_pipe_write_chain_to_temp_file(p) == NGX_ABORT) {
+            return NGX_ABORT;
+        }
+    }
+
+    return NGX_OK;
+}
+\stoptyping
+
+内容太多, 一些细节并不能一下子明白, 还要再反复理解一下.

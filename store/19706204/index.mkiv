@@ -1,0 +1,52 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Title: ATS - protocol 分析
+%Class: ats
+%Post:1
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\def\ts{Traffic Server}
+
+\section{网络监听}
+因为要对于网络进行监听, 所以要创建对应的网络处理程序.
+
+\starttyping
+  contp = TSContCreate(accept_handler, TSMutexCreate());
+
+  /* Accept network traffic from the accept_port.
+     When there are requests coming in, contp's handler
+     should be called, in this case, contp's handler
+     is accept_event, see AcceptSM.c */
+  pending_action = TSNetAccept(contp, accept_port, -1, 1);
+\stoptyping
+
+
+当收到连接后, 要创建一个 TxnSM 进行处理.
+\starttyping
+    txn_sm = (TSCont) TxnSMCreate(pmutex, (TSVConn) edata, server_port);
+    TSContCall(txn_sm, 0, NULL);
+\stoptyping
+这里的 TxnSMCreate 是在TxnSM.c 里进行定义的. 而 TSContCall 会触发
+事件 TSCont 的 0 事件.
+
+TxnSMCreate 中初始化了一个 TxnSM 数据结构. 并创建一个 TSCont,
+把这个TxnSM 与 TSCont 相关联, 之后返回 TSCont.
+
+\section{q_current_handler}
+main_handler 是一个总的处理, 但是对于处于什么状态,
+详细的处理是通过TxnSM 的q_current_handler 属性指向的回调
+来实现的.
+
+\startitemize
+\item state_start: 创建一个 buffer. 设置下一次的回调.state_interface_with_client
+\item state_interface_with_client: 会分别处理请求与响应.
+这里有一个常见的问题就是, 如果, 请求头没有完整, 这个时候如何处理.
+从 \ts 的角度来说, 要重新激活 client 的 VIO. 而状态机层面上要保证不会出现
+状态的切换, 就可以实现重新进入.
+
+而在完成请求的解析之后, 重新设置 q_current_handler. 状态的切换则是由
+\bold{TSCacheRead} 完成的.
+
+\item state_handle_cache_lookup: 从这里函数进入两个分支. 命中与不命中两种情况.
+
+\stopitemize
+
+好吧, 我不想写了, 有了这些开头, 后面就比较简单了.

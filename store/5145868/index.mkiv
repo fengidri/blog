@@ -1,0 +1,12 @@
+%title: nginx 模块的组织
+%post:0
+nginx_modules这个全局的变量不是写在代码里的, 而是根据编译的
+参数自动生成的.
+
+
+\section{运行流程}
+在worker 进程的入口函数:ngx_single_process_cycle 中. 调用所有的进程的
+init_process 完成各个模块在process 中的初始工作. 包括网络事件监听
+的初始化工作. 
+
+之后进入worker 的主循环中初始网络事件.

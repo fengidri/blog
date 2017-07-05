@@ -1,0 +1,55 @@
+
+
+
+
+
+
+<h3>说明</h3>
+<p>本文是对于我个人的vim 插件的一些说明. 我发现我们有时基于一个很好的想法编写一个插件, 这个想法在我们的大脑中. 但是如果没有经常性使用, 又或者这个功能比较复杂一段时间之后, 我们自己都不知道这个软件的功能了. </p><p>并且如果没有详细地记录下这些插件的功能, 当我们开发新的功能的时候有可能破坏了旧的功能. </p><p>所有的插件的源码:&nbsp;<a href=http://github.com/fengidri/pyplugin >pyplugin</a>&nbsp;
+
+<h3>vimlib</h3>
+<p>vimlib是pyplugin的核心. 提供了许多python接口. 这些接口是对于vim 的接口的封装. 同时也提供了一个插件机制. 可以方便地增加新命令与事件. </p><p>此外重点提供两个功能. vuirpc与im. </p><p>im的功能实质上是对vim在输入模式下的所有的输入的监控. 并定制这些输入的结果. 在这之上实现了一个五笔输入法. (补: 近来对于输入法这一部分进行了优化. 之前的是没有联想的, 也就是说输入的时候是很不方便地. 最近增加了这个功能. 对于输入的核心结构也进行了优化. 构架上使用了C/S的结构. 这样做的目的是加快了码表的载入速度, 不用每个vim进程都加载了码表. 而且实际上通过网络在每一次的时候输入获得结果对于实际的输入体验是没有影响的.</p><p>另一方面在于数据结构的设计. 之前是完全依赖于sql 语句在每一次输入的时候进行查询, 现在使用字典树的方式进行数据的获得. </p><p>并且可能通过用户的输入记录对于输出的可选结果进行排序.</p><p>2015年 02月 03日 星期二 13:16:13 CST)</p><p>vuirpc 是一个网络实现. 用于与vuirpc_server 进行连接实现一些更加丰富的gui 操作.</p><p>
+
+<h4>vuirpc</h4>
+<p>vuirpc是一个长连接. 因为在gui上的许多操作可能还要与vim 这一端进行一些信息的交互. <pre>client = VuiClient()
+client.sethandle(110, showfile)
+client.sethandle(200, showfile)
+client.request("/open/file", msg)
+response = client.response()
+</pre>
+<p>在发出request 请求之后应该进行response等待. 这个接口会阻塞直到response 的状态code 大于等于200.在这个过程中会收到vuirpc_server 的响应这些响应的code小于200. 对于这些响应如何处理是通过sethandle 方法设置回调实现的. 回调函数的参数是response.</p><p>
+
+<h3>Frain</h3>
+<p>这是由几个功能性插件组合成的插件用于对于工程进行管理. 当然也可以单独使用.
+
+<h4>PathsExp</h4>
+<p>文件浏览工具, 与Nerttree 的功能相似. 只是为了提供更好的接口给Frain 中的其它插件. </p><p>为了可以与别的插件进行交互, PathsExp 是基于一个setting 的数据进行工作的.这个setting 中指定了当前要列出一工作的目录与这些目录的呈现的名字.</p><p><table>
+<tr><td>PathsExp path name</td><td>依赖于当前的setting刷新数据. 如果有path/name参数, 则会把path/name 增加到setting中去.</td></tr>
+<tr><td>PathsExpFilter </td><td>开启/关闭过滤</td></tr>
+<tr><td>PathsExpRefresh </td><td>刷新当前的窗口. 目前PathsExp 没有对于实现的目录进行跟踪, 所以要手动刷新.</td></tr>
+<tr><td>PathsExpOpen </td><td>当focus 在PathsExp 窗口时, 打开当前光标下文件/目录</td></tr>
+<tr><td>PathsExpFind </td><td>在PathsExp 窗口中显示当前文件的位置</td></tr>
+<tr><td>PathsExpGo </td><td>切换到PathsExp 窗口</td></tr>
+</table>
+
+
+<h4>Project</h4>
+<p>进入工程模式. 打开工程的时候会自动调用PathsExp. 运行依赖于一些工程说明性信息. </p><p>
+
+<h3>其它插件功能</h3>
+<p>打*的功能处于不稳定状态<table>
+<tr><td>GoAny/GoAny </td><td>在当前的文件中进行跳转定位. 对于当前文件的分析是依赖于ctags</td></tr>
+<tr><td>GoFile/GoFile </td><td>在当前的项目的所有的文件中进行跳转.</td></tr>
+<tr><td>better_edit/Align </td><td>对于选中的行进行对齐</td></tr>
+<tr><td>better_AlignTag </td><td>对于选中的行使用参数中的符号对齐</td></tr>
+<tr><td>c/CFunComment </td><td>为c中的函数增加优秀的注释</td></tr>
+<tr><td>goto_include/goto_include </td><td>在项目中中转到头文件 </td></tr>
+<tr><td>hi_current_word </td><td>着重显示当前的输入 </td></tr>
+<tr><td>show_buffer_pos/ShowBufferPos* </td><td>在PathsExp中显示当前的文件的位置. </td></tr>
+<tr><td>src_info </td><td>自动为源文件增加头文件信息 </td></tr>
+<tr><td>ssh_open* </td><td>远程编辑 </td></tr>
+<tr><td>tags </td><td>tags 跳转 </td></tr>
+<tr><td>vim_search </td><td>在当前的项目文件中进行查找 </td></tr>
+<tr><td>wiki/WikiPost </td><td>把当前的buffer的内容进行wiki 提供 </td></tr>
+<tr><td>wiki/WikiPut </td><td>提交当前的修改. 可以直接使用WikiPost <tr><td>wiki/WikiGet </td><td>得到指定参数的wiki 内容. </td></tr>
+</table>

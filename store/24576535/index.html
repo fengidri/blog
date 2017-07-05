@@ -1,0 +1,52 @@
+<p>
+</p>
+
+<h3>CLFUS</h3>
+<p>新的 RAM Cache策略 CLFUS(Clocked Least Frequently Used by Size) 来源于多个缓存替换策略和算法,
+包换: LRU, LFU, CLOCK, GDFS and 2Q.
+没有使用任何专利算法, 并包含有如下特性:
+
+    <ul>
+
+        <li>基于最大命中率(不是字节命中率)平衡 Recentness, Frequency and Size
+
+        <li>即使工作集不适合在内存缓存中, 也可以保持Scan Resistant 和命中率的强健
+
+        <li>支持三个级别的压缩: fastlz, gzip (libz), and xz (liblzma). 压缩过程可以移到别的线程中去.
+
+        <li>非常底的 CPU 占用, 只比基础的 LRU 高一点. 使用一个概率替代的方式实现成本比较底的
+O(1)性能, 而不是 O(lg n)
+
+        <li>有相对较低的内存开销, 内存中每个对象约200字节。
+    </ul></p>
+
+<p>强调<b>命中率</b>超过<b>字节命中率</b>的理由是,
+从二级存储多个字节的开销相比是低成本的要求。</p>
+
+<p>对象的内存缓存由散列面对2 LRU /时钟列表和一个哈希表。
+第一个缓存列表包含对象在内存中,而另一个包含对象的历史,
+最近在内存中或正在考虑保持在内存中。
+看到哈希表是用于制造耐算法扫描。</p>
+
+<p>列表条目记录以下信息:
+<table>
+<tr><td>Value </td><td>Description </td></tr>
+<tr><td>key	 </td><td>16 byte unique object identifier</td></tr>
+<tr><td>auxkeys 	 </td><td>8 bytes worth of version number (in our system, the block in the partition). When the version of an object changes old entries are purged from the cache.</td></tr>
+<tr><td>hits	 </td><td>Number of hits within this clock period.</td></tr>
+<tr><td>size	 </td><td>size of the object in the cache.</td></tr>
+<tr><td>len	 </td><td>Length of the object, which differs from size because of compression and padding).</td></tr>
+<tr><td>compressed_len	</td><td>Compressed length of the object.</td></tr>
+<tr><td>compressed	 </td><td>Compression type, or none if no compression. Possible types are: fastlz, libz, and liblzma.</td></tr>
+<tr><td>uncompressible	</td><td>Flag indicating that content cannot be compressed (true), or that it mat be compressed (false).</td></tr>
+<tr><td>copy	 </td><td>Whether or not this object should be copied in and copied out (e.g. HTTP HDR).</td></tr>
+<tr><td>LRU link	 </td></tr>
+<tr><td>HASH link	 </td></tr>
+<tr><td>IOBufferData	</td><td>Smart point to the data buffer.</td></tr>
+</table>
+缓存的接口是 <b>Get</b>或 <b>Put</b>操作. <b>Get</b>操作用于检查对象
+是不是在缓存中, 是一个读行为. <b>Put</b>操作决定了是否把提供的对象放到
+内存中缓存. 它被称为后从二级存储读取。</p>
+
+<h3>Seen Hash</h3>
+<p></p>

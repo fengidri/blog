@@ -1,0 +1,38 @@
+%title: 协议混淆
+\section{协议混淆}
+简单来说就是把传输的数据进行简单的打乱加密等操作.
+
+这里比较多的一种情况是针对ssh 的混淆. 为什么要这样做呢?
+我们的流量在网络上会经过很多关口. 在必要的情况下这些关口可以对于流量进行
+控制. 
+
+而一般的网络协议都是有其特征的, 如果有心的情况下可以分析出这些协议的
+特征进行管理.
+
+所以在必要的情况下, 为了可以正常的通信就要隐藏协议的特征. 
+这从原理上来说没有什么问题, 只是在数据出去的时候与接收数据的这两个时机
+对于数据进行过滤就可以了.
+
+其实混淆的方法有很多, 在传输结构上也有很多种思路, 只要可以保证数据在流经
+这些关口的时候数据不再有协议的特征就可以了.
+
+\section{SSH协议混淆}
+这里有一个项目: https://github.com/brl/obfuscated-openssh/. 其对于openssh
+进行的实现, 生成的程序默认是在/usr/local/bin下面.
+
+\starttyping
+wget -O ofcssh.tar.gz  https://github.com/brl/obfuscated-openssh/tarball/master 
+tar zxvf ofcssh.tar.gz
+cd brl-obfuscated-openssh-ca93a2c
+./configure
+make
+sudo make install
+\stoptyping
+
+可以运行
+\starttyping
+/usr/local/bin/ssh -Z secret
+\stoptyping
+
+这里的secret是一个相当于base64中的概念. 用于对于数据内容进行混淆.
+详细的ssh 通道命令与方法可以看这里\goto[ssh proxy][http://blog.fengidri.me/?id=2219033]

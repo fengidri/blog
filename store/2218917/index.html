@@ -1,0 +1,34 @@
+<p>单选:
+<pre>
+echo "print 'a' " | python -
+</pre>
+
+在shell中嵌入 python, 也可以在命令行上快速执行
+<pre>
+cat &lt;&lt;EOF | python2 -
+import os
+print os.name
+EOF
+</pre>
+</p>
+
+<p>当前也可以:</p>
+
+<p><pre>
+A='AAAAAAAAAA'
+cat &lt;&lt;EOF | python2 -
+print "$A"
+EOF
+</pre>
+</p>
+
+<p>还可以是函数
+<pre>
+function A(){
+cat &lt;&lt;EOF | python2 -
+print "$1"
+EOF
+}
+A "AAAAAAAAAAA"
+</pre>
+</p>

@@ -1,0 +1,153 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Title: TCP - tcp_write_xmit
+%Class: tcp
+%Post:1
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+ TCP 段是封装在 IP 数据报中传输的, 而 IP 数据报的传输是不可靠的.
+ 因此, 不能将 TCP 报文发送出去之后就不再管它们了, 相反必须跟踪它们,
+ 直到出现三种情况为止:
+\startitemize
+\item 在规定时间内接收方确认已经收到报文
+\item 发生超时, 规定时间内未接收到的接收方的确定
+\item 确定数据已经丢失
+\stopitemize
+
+下图显示了对于 skb 的管理.
+
+\img{http://i12.tietuku.com/4db60ae7527907f8.png}
+
+sk_write_q痈疽存储的是发送队列双向链表的链表头. 而 TCP 传输控制块的另外一个成员 sk_send_head 指向
+发送队列中的下一个要发送的数据包. 这个字段是用于指向哪些包还没有发送, 而不是用来进行发送的, 如果为空,
+则意味着发送队列上的所有数据者已经发送过了.
+
+下图显示了发送 TCP 包的函数调用过程:
+
+\img{http://i12.tietuku.com/8f587903cf4875b1.png}
+
+下面主要说明 tcp_write_xmit 函数:
+
+这个函数是 tcp 的发送函数,
+会把队列上的 SKB 发送出动, 返回 0 表示成功.
+
+参数 mss_now: 当前的 MSS; 参数 nonagle 是否使用 nagle 算法
+
+
+\starttyping
+/* This routine writes packets to the network.  It advances the
+ * send_head.  This happens as incoming acks open up the remote
+ * window for us.
+ *
+ * LARGESEND note: !tcp_urg_mode is overkill, only frames between
+ * snd_up-64k-mss .. snd_up cannot be large. However, taking into
+ * account rare use of URG, this is not a big flaw.
+ *
+ * Returns 1, if no segments are in flight and we have queued segments, but
+ * cannot send anything now because of SWS or another problem.
+ */
+static int tcp_write_xmit(struct sock *sk, unsigned int mss_now, int nonagle,
+			  int push_one, gfp_t gfp)
+{
+	struct tcp_sock *tp = tcp_sk(sk);
+	struct sk_buff *skb;
+	unsigned int tso_segs, sent_pkts;
+	int cwnd_quota;
+	int result;
+
+	sent_pkts = 0; // 统计函数中已发送的报文数.
+
+	if (!push_one) {
+		/* Do MTU probing. */
+		result = tcp_mtu_probe(sk); // 发送一个路径 MTU 探测报文
+		if (!result) {
+			return 0;
+		} else if (result > 0) {
+			sent_pkts = 1;  // 成功了, 发送报文数加 1
+		}
+	}
+
+	while ((skb = tcp_send_head(sk))) { // 得到发送队列, 如果发送队列不为空, 准备开始发送报文
+		unsigned int limit;
+
+        // 设置有关 tso 的信息, 包括 GSO 类型, GSO 分段大小
+        // 这些信息是准备给软件 TSO 分段使用的, 如果网络设置不支持 TSO,
+        // 但是双使用了 TSO 功能, 则报文在提交给网络设备之前, 要进行软件分段
+		tso_segs = tcp_init_tso_segs(sk, skb, mss_now);
+		BUG_ON(!tso_segs);
+
+        // 检测拥塞窗口大小, 为果为 0, 则说明拥塞窗口已满, 目前不能发送
+		cwnd_quota = tcp_cwnd_test(tp, skb);
+		if (!cwnd_quota)
+			break;
+
+        // 检测当前报文是否完全处在发送窗口内, 如果是则可以发送, 否则目前不能发送
+		if (unlikely(!tcp_snd_wnd_test(tp, skb, mss_now)))
+			break;
+
+
+		if (tso_segs == 1) {
+            // 无需 TSO 分段, 检测是否使用 nagle 算法, 当前能否立即发送这个段
+			if (unlikely(!tcp_nagle_test(tp, skb, mss_now,
+						     (tcp_skb_is_last(sk, skb) ?
+						      nonagle : TCP_NAGLE_PUSH))))
+				break;
+		} else {
+            // 要进行 TSO 分段, 检测报文是否应该延时发送, 如果是则, 目前不能发送.
+			if (!push_one && tcp_tso_should_defer(sk, skb)) // 检测 GSO 是否是不是要延时发送.
+				break;
+            // 1. 在段中有 FIN 标志
+            // 2. 不处于 Open 拥塞状态,
+            // 3. TSO 段延时超过 2 个时钟滴答,
+            // 4. 拥塞窗口和发送窗口的最小值大于 64K 或三倍当前的有效 MSS
+            // 在这些情况下立即发送, 其他情况下会延时发送, 主要是为了减少软 GSO 分段的次数提高性能
+		}
+
+        // 分段处理
+		limit = mss_now;
+		if (tso_segs > 1 && !tcp_urg_mode(tp))
+			limit = tcp_mss_split_point(sk, skb, mss_now,
+						    cwnd_quota);
+
+        // 如果 SKB 中的数据长度大于分段段长, 则调用 tso_fragment, 进行段长进行分段,
+        // 如果分段失败则目前暂不发送.
+		if (skb->len > limit &&
+		    unlikely(tso_fragment(sk, skb, limit, mss_now)))
+			break;
+
+		TCP_SKB_CB(skb)->when = tcp_time_stamp; // 记录报文的发送时间, 主要用于进行 RTT 计算
+
+        // ** 调用 tcp_transmit_skb 发送 TCP 段. 参数 1 表示要克隆被发送报文
+		if (unlikely(tcp_transmit_skb(sk, skb, 1, gfp)))
+            // 如果失败, 中止报文的发送
+			break;
+
+		/* Advance the send_head.  This one is sent out.
+		 * This call will increment packets_out.
+		 */
+        // 更新 sk_send_head, 取队列中的下一个 SKB, 同时更新 snd_nxt, 即下一下人发送序号,
+        // 然后统计发送, 但是未得到确认的数据报数.
+		tcp_event_new_data_sent(sk, skb);
+
+        // 如果发送的报文小于 MSS, 则更新最近发送的小包的最后一个字节序号.
+		tcp_minshall_update(tp, mss_now, skb);
+		sent_pkts++;
+
+		if (push_one)
+			break;
+	}
+
+    // 如果本次有数据发送, 则于 TCP 拥塞窗口进行确认
+	if (likely(sent_pkts)) {
+		tcp_cwnd_validate(sk);
+		return 0;
+	}
+
+    // 如果本次没有数据发送, 则根据已经发送的但未确诊的报文数 packets_out 和 sk_send_head,
+    // packets_out 不为 0 或 sk_send_head 为空都视为数据发出, 因此返回成功.
+	return !tp->packets_out && tcp_send_head(sk);
+}
+\stoptyping
+
+
+\section{参考}
+Linux 内核源码剖析 TCP/IP 实现

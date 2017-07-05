@@ -1,0 +1,485 @@
+<p></p>
+
+<h3>前言</h3>
+<p></p>
+
+<h4>拥塞状态</h4>
+<p>linux 下分成 5 个拥塞状态, 定义如下:
+<pre>
+enum tcp_ca_state {
+    TCP_CA_Open = 0,
+#define TCPF_CA_Open    (1&lt;&lt;TCP_CA_Open)
+    TCP_CA_Disorder = 1,
+#define TCPF_CA_Disorder (1&lt;&lt;TCP_CA_Disorder)
+    TCP_CA_CWR = 2,
+#define TCPF_CA_CWR (1&lt;&lt;TCP_CA_CWR)
+    TCP_CA_Recovery = 3,
+#define TCPF_CA_Recovery (1&lt;&lt;TCP_CA_Recovery)
+    TCP_CA_Loss = 4
+#define TCPF_CA_Loss    (1&lt;&lt;TCP_CA_Loss)
+}
+</pre>
+</p>
+
+<p>
+    <ul>
+
+        <li>TCP_CA_OPEN 这个就是初始状态，也就是没有检测到任何拥塞的情况.
+
+        <li>TCP_CA_Disorder 顾名思义，这个状态就是当第一次由于收到 SACK 或者重复的 ack 而检测到拥塞时，就进入这个状态.
+
+        <li>TCP_CA_CWR 由于一些拥塞通知事件而导致拥塞窗口减小,然后就会进入这个状态。比如ECN，ICMP，本地设备拥塞。
+
+        <li>TCP_CA_Recovery 当 CWND 减小
+
+        <li>TCP_CA_Loss 超时或者 SACK 被拒绝，此时表示数据包丢失，因此进入这个状态.
+    </ul></p>
+
+<h4>数据结构</h4>
+<p><pre>
+struct tcp_sock {
+    /* inet_connection_sock has to be the first member of tcp_sock */
+    struct inet_connection_sock inet_conn;
+    u16 tcp_header_len; /* Bytes of tcp header to send      */
+    u16 xmit_size_goal_segs; /* Goal for segmenting output packets */
+
+/*
+ *  Header prediction flags
+ *  0x5?10 &lt;&lt; 16 + snd_wnd in net byte order
+ */
+    __be32  pred_flags;
+
+/*
+ *  RFC793 variables by their proper names. This means you can
+ *  read the code and the spec side by side (and laugh ...)
+ *  See RFC793 and RFC1122. The RFC writes these in capitals.
+ */
+    u32 rcv_nxt;    /* What we want to receive next     */
+    u32 copied_seq; /* Head of yet unread data      */
+    u32 rcv_wup;    /* rcv_nxt on last window update sent   */
+    u32 snd_nxt;    /* Next sequence we send        */
+
+    u32 snd_una;    /* First byte we want an ack for    */
+    u32 snd_sml;    /* Last byte of the most recently transmitted small packet */
+    u32 rcv_tstamp; /* timestamp of last received ACK (for keepalives) */
+    u32 lsndtime;   /* timestamp of last sent data packet (for restart window) */
+
+    /* Data for direct copy to user */
+    struct {
+        struct sk_buff_head prequeue;
+        struct task_struct  *task;
+        struct iovec        *iov;
+        int         memory;
+        int         len;
+#ifdef CONFIG_NET_DMA
+        /* members for async copy */
+        struct dma_chan     *dma_chan;
+        int         wakeup;
+        struct dma_pinned_list  *pinned_list;
+        dma_cookie_t        dma_cookie;
+#endif
+    } ucopy;
+
+    u32 snd_wl1;    /* Sequence for window update       */
+    u32 snd_wnd;    /* The window we expect to receive  */
+    u32 max_window; /* Maximal window ever seen from peer   */
+    u32 mss_cache;  /* Cached effective mss, not including SACKS */
+
+    u32 window_clamp;   /* Maximal window to advertise      */
+    u32 rcv_ssthresh;   /* Current window clamp         */
+
+    u32 frto_highmark;  /* snd_nxt when RTO occurred */
+    u16 advmss;     /* Advertised MSS           */
+    u8  frto_counter;   /* Number of new acks after RTO */
+    u8  nonagle     : 4,/* Disable Nagle algorithm?             */
+        thin_lto    : 1,/* Use linear timeouts for thin streams */
+        thin_dupack : 1,/* Fast retransmit on first dupack      */
+        repair      : 1,
+        unused      : 1;
+    u8  repair_queue;
+    u8  do_early_retrans:1,/* Enable RFC5827 early-retransmit  */
+        early_retrans_delayed:1; /* Delayed ER timer installed */
+
+/* RTT measurement */
+    u32 srtt;       /* smoothed round trip time &lt;&lt; 3  */
+    u32 mdev;       /* medium deviation         */
+    u32 mdev_max;   /* maximal mdev for the last rtt period */
+    u32 rttvar;     /* smoothed mdev_max            */
+    u32 rtt_seq;    /* sequence number to update rttvar */
+
+    u32 packets_out;    /* Packets which are "in flight"    */
+    u32 retrans_out;    /* Retransmitted packets out        */
+
+    u16 urg_data;   /* Saved octet of OOB data and control flags */
+    u8  ecn_flags;  /* ECN status bits.         */
+    u8  reordering; /* Packet reordering metric.        */
+    u32 snd_up;     /* Urgent pointer       */
+
+    u8  keepalive_probes; /* num of allowed keep alive probes   */
+/*
+ *      Options received (usually on last packet, some only on SYN packets).
+ */
+    struct tcp_options_received rx_opt;
+
+/*
+ *  Slow start and congestion control (see also Nagle, and Karn &amp; Partridge)
+ */
+    u32 snd_ssthresh;   /* Slow start size threshold        */
+    u32 snd_cwnd;   /* Sending congestion window        */
+    u32 snd_cwnd_cnt;   /* Linear increase counter      */
+    u32 snd_cwnd_clamp; /* Do not allow snd_cwnd to grow above this */
+    u32 snd_cwnd_used;
+    u32 snd_cwnd_stamp;
+    u32 prior_cwnd; /* Congestion window at start of Recovery. */
+    u32 prr_delivered;  /* Number of newly delivered packets to
+                 * receiver in Recovery. */
+    u32 prr_out;    /* Total number of pkts sent during Recovery. */
+
+    u32 rcv_wnd;    /* Current receiver window      */
+    u32 write_seq;  /* Tail(+1) of data held in tcp send buffer */
+    u32 pushed_seq; /* Last pushed seq, required to talk to windows */
+    u32 lost_out;   /* Lost packets         */
+    u32 sacked_out; /* SACK'd packets           */
+    u32 fackets_out;    /* FACK'd packets           */
+    u32 tso_deferred;
+    u32 bytes_acked;    /* Appropriate Byte Counting - RFC3465 */
+
+    /* from STCP, retrans queue hinting */
+    struct sk_buff* lost_skb_hint;
+    struct sk_buff *scoreboard_skb_hint;
+    struct sk_buff *retransmit_skb_hint;
+
+    struct sk_buff_head out_of_order_queue; /* Out of order segments go here */
+
+    /* SACKs data, these 2 need to be together (see tcp_options_write) */
+    struct tcp_sack_block duplicate_sack[1]; /* D-SACK block */
+    struct tcp_sack_block selective_acks[4]; /* The SACKS themselves*/
+
+    struct tcp_sack_block recv_sack_cache[4];
+
+    struct sk_buff *highest_sack;   /* skb just after the highest
+                     * skb with SACKed bit set
+                     * (validity guaranteed only if
+                     * sacked_out &gt; 0)
+                     */
+
+    int     lost_cnt_hint;
+    u32     retransmit_high;    /* L-bits may be on up to this seqno */
+
+    u32 lost_retrans_low;   /* Sent seq after any rxmit (lowest) */
+
+    u32 prior_ssthresh; /* ssthresh saved at recovery start */
+    u32 high_seq;   /* snd_nxt at onset of congestion   */
+
+    u32 retrans_stamp;  /* Timestamp of the last retransmit,
+                 * also used in SYN-SENT to remember stamp of
+                 * the first SYN. */
+    u32 undo_marker;    /* tracking retrans started here. */
+    int undo_retrans;   /* number of undoable retransmissions. */
+    u32 total_retrans;  /* Total retransmits for entire connection */
+
+    u32 urg_seq;    /* Seq of received urgent pointer */
+    unsigned int        keepalive_time;   /* time before keep alive takes place */
+    unsigned int        keepalive_intvl;  /* time interval between keep alive probes */
+
+    int         linger2;
+
+/* Receiver side RTT estimation */
+    struct {
+        u32 rtt;
+        u32 seq;
+        u32 time;
+    } rcv_rtt_est;
+
+/* Receiver queue space */
+    struct {
+        int space;
+        u32 seq;
+        u32 time;
+    } rcvq_space;
+
+/* TCP-specific MTU probe information. */
+    struct {
+        u32       probe_seq_start;
+        u32       probe_seq_end;
+    } mtu_probe;
+
+#ifdef CONFIG_TCP_MD5SIG
+/* TCP AF-Specific parts; only used by MD5 Signature support so far */
+    const struct tcp_sock_af_ops    *af_specific;
+
+/* TCP MD5 Signature Option information */
+    struct tcp_md5sig_info  __rcu *md5sig_info;
+#endif
+
+    /* When the cookie options are generated and exchanged, then this
+     * object holds a reference to them (cookie_values-&gt;kref).  Also
+     * contains related tcp_cookie_transactions fields.
+     */
+    struct tcp_cookie_values  *cookie_values;
+}
+</pre>
+</p>
+
+<h4>主体函数 tcp_fastretrans_alert</h4>
+<p>进入这个函数的条件:
+
+    <ul>
+
+        <li>each incoming ACK, if state is not “Open”
+
+        <li>when arrived ACK is unusual, namely:
+ 
+    <ul>
+
+        <li>SACK
+ 
+        <li>Duplicate ACK.
+ 
+        <li>ECN ECE.
+
+    </ul>
+    </ul></p>
+
+<h3>tcp_fastretrans_alert</h3>
+<p>这个函数完成 TCP 拥塞状态机的处理, 在 tcp_ack 中被调用.</p>
+
+<p>函数分成以下情况:
+
+    <ul>
+
+        <li>FLAG_ECE，收到包含ECE标志的ACK。
+
+        <li>reneging SACKs，ACK指向已经被SACK的数据段。如果是此原因，进入超时处理，然后返回。
+
+        <li>state is not Open，发现丢包，需要标志出丢失的包，这样就知道该重传哪些包了。
+
+        <li>检查是否有错误( left_out > packets_out)。
+
+        <li>各个状态是怎样退出的，当snd_una >= high_seq时候。
+
+        <li>各个状态的处理和进入。
+    </ul></p>
+
+<p><pre>
+/* Process an event, which can update packets-in-flight not trivially.
+ * Main goal of this function is to calculate new estimate for left_out,
+ * taking into account both packets sitting in receiver's buffer and
+ * packets lost by network.
+ *
+ * Besides that it does CWND reduction, when packet loss is detected
+ * and changes state of machine.
+ *
+ * It does not decide what to send, it is made in function
+ * tcp_xmit_retransmit_queue().
+ */
+
+/* 此函数被调用的条件：
+ * (1) each incoming ACK, if state is not Open
+ * (2) when arrived ACK is unusual, namely:
+ *       SACK
+ *       Duplicate ACK
+ *       ECN ECE
+ */
+
+static void tcp_fastretrans_alert(struct sock *sk, int pkts_acked, int flag)
+{
+	struct inet_connection_sock *icsk = inet_csk(sk);
+	struct tcp_sock *tp = tcp_sk(sk);
+
+    /* FLAG_SND_UNA_ADVANCED  表示Snd_una被改变，也就是当前的ack不是一个重复ack。
+       FLAG_NOT_DUP           表示也表示不是重复ack。*/
+	/* 判断是不是重复的ACK*/
+	int is_dupack = ! (flag &amp; (FLAG_SND_UNA_ADVANCED | FLAG_NOT_DUP));
+
+	/* tcp_fackets_out()返回hole的大小，如果大于reordering，则认为发生丢包.*/
+	int do_lost = is_dupack || ((flag &amp; FLAG_DATA_SACKED) &amp;&amp;
+				(tcp_fackets_out(tp) &gt; tp-&gt;reordering ));
+
+	int fast_rexmit = 0, mib_idx;
+
+	/* 如果packet_out为0，那么不可能有sacked_out */
+	if (WARN_ON(!tp-&gt;packets_out &amp;&amp; tp-&gt;sacked_out))
+		tp-&gt;sacked_out = 0;
+
+	/* fack的计数至少需要依赖一个SACK的段.*/
+	if (WARN_ON(!tp-&gt;sacked_out &amp;&amp; tp-&gt;fackets_out))
+		tp-&gt;fackets_out = 0;
+
+	/* Now state machine starts.
+	 * A. ECE, hence prohibit cwnd undoing, the reduction is required.
+	 * 禁止拥塞窗口撤销，并开始减小拥塞窗口。
+	 */
+	if (flag &amp; FLAG_ECE)
+		tp-&gt;prior_ssthresh = 0;
+	
+	/* B. In all the states check for reneging SACKs.
+	 * 检查是否为虚假的SACK，即ACK是否确认已经被SACK的数据.
+	 */
+	if (tcp_check_sack_reneging(sk, flag))
+		return;
+	
+	/* C. Process data loss notification, provided it is valid.
+	 * 为什么需要这么多个条件？不太理解。
+	 * 此时不在Open态，发现丢包，需要标志出丢失的包。
+	  */
+	if (tcp_is_fack(tp) &amp;&amp; (flag &amp; FLAG_DATA_LOSS) &amp;&amp;
+		before(tp-&gt;snd_una, tp-&gt;high_seq) &amp;&amp;
+		icsk-&gt;icsk_ca_state != TCP_CA_Open &amp;&amp;
+		tp-&gt;fackets_out &gt; tp-&gt;reordering) {
+		tcp_mark_head_lost(sk, tp-&gt;fackets_out - tp-&gt;reordering, 0);
+		NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPLOSS);
+		}
+
+	/* D. Check consistency of the current state.
+	 * 确定left_out &lt; packets_out
+	 */
+	tcp_verify_left_out(tp);
+
+	/* E. Check state exit conditions. State can be terminated
+	 * when high_seq is ACKed. */
+	if (icsk-&gt;icsk_ca_state == TCP_CA_Open) {
+		/* 在Open状态，不可能有重传且尚未确认的段*/
+		WARN_ON(tp-&gt;retrans_out != 0);
+		/* 清除上次重传阶段第一个重传段的发送时间*/
+		tp-&gt;retrans_stamp = 0;
+
+	} else if (!before(tp-&gt;snd_una, tp-&gt;high_seq) {/* high_seq被确认了*/
+		switch(icsk-&gt;icsk_ca_state) {
+			case TCP_CA_Loss:
+				icsk-&gt;icsk_retransmits = 0; /*超时重传次数归0*/
+
+				/*不管undo成功与否，都会返回Open态，除非没有使用SACK*/
+				if (tcp_try_undo_recovery(sk))
+					return;
+				break;
+
+			case TCP_CA_CWR:
+				/* CWR is to be held someting *above* high_seq is ACKed
+				 * for CWR bit to reach receiver.
+				 * 需要snd_una &gt; high_seq才能撤销
+				   */
+				if (tp-&gt;snd_una != tp-&gt;high_seq) {
+					tcp_complete_cwr(sk);
+					tcp_set_ca_state(sk, TCP_CA_Open);
+				}
+				break;
+
+			case TCP_CA_Disorder:
+				tcp_try_undo_dsack(sk);
+				 /* For SACK case do not Open to allow to undo
+				  * catching for all duplicate ACKs.?*/
+				if (!tp-&gt;undo_marker || tcp_is_reno(tp) ||
+					tp-&gt;snd_una != tp-&gt;high_seq) {
+					tp-&gt;undo_marker = 0;
+					tcp_set_ca_state(sk, TCP_CA_Open);
+				}
+
+			case TCP_CA_Recovery:
+				if (tcp_is_reno(tp))
+					tcp_reset_reno_sack(tp)); /* sacked_out清零*/
+
+				if (tcp_try_undo_recovery(sk))
+					return;
+
+				tcp_complete_cwr(sk);
+				break;
+		}
+	}
+
+	/* F. Process state. */
+	switch(icsk-&gt;icsk_ca_state) {
+		case TCP_CA_Recovery:
+			if (!(flag &amp; FLAG_SND_UNA_ADVANCED)) {
+				if (tcp_is_reno(tp) &amp;&amp; is_dupack)
+					tcp_add_reno_sack(sk); /* 增加sacked_out ，检查是否出现reorder*/
+			} else
+				do_lost = tcp_try_undo_partial(sk, pkts_acked);
+			break;
+
+		case TCP_CA_Loss:
+			/* 收到partical ack，超时重传的次数归零*/
+			if (flag &amp; FLAG_DATA_ACKED)
+				icsk-&gt;icsk_retransmits = 0;
+
+			if (tcp_is_reno(tp) &amp;&amp; flag &amp; FLAG_SND_UNA_ADVANCED)
+				tcp_reset_reno_sack(tp); /* sacked_out清零*/
+
+			if (!tcp_try_undo_loss(sk)) { /* 尝试撤销拥塞调整，进入Open态*/
+				/* 如果不能撤销，则继续重传标志为丢失的包*/
+				tcp_moderate_cwnd(tp);
+				tcp_xmit_retransmit_queue(sk); /* 待看*/
+			   return;
+			}
+
+			if (icsk-&gt;icsk_ca_state != TCP_CA_Open)
+				return;
+
+		/* Loss is undone; fall through to process in Open state.*/
+		default:
+			if (tcp_is_reno(tp)) {
+				if (flag &amp; FLAG_SND_UNA_ADVANCED)
+				   tcp_reset_reno_sack(tp);
+
+				if (is_dupack)
+				   tcp_add_reno_sack(sk);
+			}
+
+			if (icsk-&gt;icsk_ca_state == TCP_CA_Disorder)
+				tcp_try_undo_dsack(sk); /*D-SACK确认了所有重传的段*/
+			
+			/* 判断是否应该进入Recovery状态*/
+			if (! tcp_time_to_recover(sk)) {
+			   /*此过程中，会判断是否进入Open、Disorder、CWR状态*/
+				tcp_try_to_open(sk, flag);
+				return;
+			}
+
+			/* MTU probe failure: don't reduce cwnd */
+			/* 关于MTU探测部分此处略过！*/
+			......
+
+			/* Otherwise enter Recovery state */
+			if (tcp_is_reno(tp))
+				mib_idx = LINUX_MIB_TCPRENORECOVERY;
+			else
+				mib_idx = LINUX_MIB_TCPSACKRECOVERY;
+
+			 NET_INC_STATS_BH(sock_net(sk), mib_idx);
+
+			/* 进入Recovery状态前，保存那些用于恢复的数据*/
+			tp-&gt;high_seq = tp-&gt;snd_nxt; /* 用于判断退出时机*/
+			tp-&gt;prior_ssthresh = 0;
+			tp-&gt;undo_marker = tp-&gt;snd_una;
+			tp-&gt;undo_retrans=tp-&gt;retrans_out;
+
+		   if (icsk-&gt;icsk_ca_state &lt; TCP_CA_CWR) {
+			   if (! (flag &amp; FLAG_ECE))
+				   tp-&gt;prior_ssthresh = tcp_current_ssthresh(sk); /*保存旧阈值*/
+			   tp-&gt;snd_ssthresh = icsk-&gt;icsk_ca_ops-&gt;ssthresh(sk);/*更新阈值*/
+			   TCP_ECN_queue_cwr(tp);
+		   }
+
+		   tp-&gt;bytes_acked = 0;
+		   tp-&gt;snd_cwnd_cnt = 0;
+
+		   tcp_set_ca_state(sk, TCP_CA_Recovery); /* 进入Recovery状态*/
+		   fast_rexmit = 1; /* 快速重传标志 */
+	}
+
+	if (do_lost || (tcp_is_fack(tp) &amp;&amp; tcp_head_timeout(sk)))
+		/* 更新记分牌，标志丢失和超时的数据包，增加lost_out */
+		tcp_update_scoreboard(sk, fast_rexmit);
+
+	/* 减小snd_cwnd */
+	tcp_cwnd_down(sk, flag);
+	tcp_xmit_retransmit_queue(sk);
+}
+</pre>
+</p>
+
+<h3>状态的实现</h3>
+<p>TODO</p>
+
+<h3>参考</h3>
+<p>&nbsp;<a href=http://abcdxyzk.github.io/blog/2015/03/23/kernel-net-ca/ >http://abcdxyzk.github.io/blog/2015/03/23/kernel-net-ca/</a>&nbsp;&nbsp;<a href=http://www.pagefault.info/?p=448 >http://www.pagefault.info/?p=448</a>&nbsp;</p>

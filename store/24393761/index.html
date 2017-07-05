@@ -1,0 +1,99 @@
+<p></p>
+
+<h3>现状</h3>
+<p>ATS 目前支持 SSD, 但是并没有充分地利用其特点. 特别地,
+SSD 可以做为缓存中的附加的一层(在 RAM 与传统的磁盘之间),
+SSD 可以有效地减小写操作. 目前的做法是, 我们把所有的 MISS object 写到磁盘,
+但是我们可以对于特定的 URL 只在第二次遇到的情况下写入.</p>
+
+<h3>临时缓存层</h3>
+<p>ATS 的存储原始的设计是用于支持许多大小相同的磁盘(不基于 raid).
+并建立 volumes(partitions), 并分配每一个 volumes 到一些 domain(hostname),
+我们发现, 如果我们不对于存储的原始设计思路进行修改.
+我们没有一种简单的方式得到这种多层的存储结构.
+我们得出以下临时的解决方案:
+
+    <ul>
+
+        <li>我们假设: 你们的部署是混合存储, 快速存储在数量或大小上小于慢速设备的1/10.
+
+        <li>我们假设: 8 块快速存储是足够的.
+
+        <li>我们假设: 慢速设置每一块的大小不超过 32TB.
+
+        <li>慢速设备保存所有的数据, 当快速存储失败的时候, 数据不应该丢失.
+
+        <li>在服务重启的过程中, 快速存储可以丢失一些数据比如: 10%.
+
+        <li>快速存储应该在大小和IOPS的基础上平衡所有的慢速设备. volumes 是基于所有的慢速设备上的 slice.
+我们应该分散负载到每一个快速设备上.
+    </ul></p>
+
+<h5>在平衡上的设计</h5>
+<p>
+    <ul>
+
+        <li>a interim cache 是基于快速存储(一般是 SSD). 并且在进程重启的情况下会丢失数据.
+
+        <li>最多支持8 块快速存储
+
+        <li>制作一个不包含任何index 信息的块级临时缓存,
+    </ul></p>
+
+<h4>已完成</h4>
+<p>
+    <ul>
+
+        <li>在 <b>Dir struct</b>保存4bit 数据来识别每一个快速设备
+
+        <li>我设置了磁盘的上限为 32TB
+
+        <li>我们把每一个快速设备分割到配置在 volume.config 的 volume 里并绑定.
+
+        <li>we store the interim data in the dir on the slow storages
+
+        <li>从源站响应的数据会写入到慢速设备
+
+        <li>ATS 初始化, 一个interal LRU 列表, 限制1M bucket 大小. bump the busy blocks into fast device
+
+        <li>把 interim caching devices 做为热数据缓存, 并让其更加有效. 我比较块的 LRU 列表.
+
+        <li>the interim cache device(fast disks), works with RRD writing too.
+    </ul></p>
+
+<h4>coins and pins</h4>
+<p>coins:</p>
+
+<p>we make a solid solution without big change in the storage architecture
+the LUR help us get the hot blocks, it is efficent
+the block layer interim caching can help on small objects and big ones too</p>
+
+<p>pins:</p>
+
+<p>Fixed in TS-2275
+limited in block device only for used as interim caching device
+the interim caching device space is not a add-on, but a copy of the hot data on the slow devices
+we set lower the max disk size of the storage from 0.5PB to 32TB.
+the interim caching function is not enabled by default configuration</p>
+
+<h4>开启</h4>
+<p>在编译中增加参数: --enable-interim-cache</p>
+
+<p>两个 record 配置:
+
+    <ul>
+
+        <li>proxy.config.cache.interim.storage:</p>
+
+<p>ATS 只支持多路径的 block 设备, 多个磁盘可以使用 空格进行分割比如:
+<pre>
+LOCAL proxy.config.cache.interim.storage STRING /dev/sdb /dev/sdc1
+</pre>
+</p>
+
+<p>
+        <li>proxy.config.cache.interim.migrate_threshold:</p>
+
+<p>控制多少次, 一个内容应该迁移到临时缓存存储, 默认值是2. 这意味着, 在 ATS 把资源移到
+临时缓存之前 URL 应该在 LRU 里出现两次.
+    </ul></p>

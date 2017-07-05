@@ -1,0 +1,20 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Title: 单独编译内核模块
+%Class: kernel
+%Post:1
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+对于内核自带的模块, 如何进行单独编译:
+
+以 ft1000 为例:
+\starttyping
+vi .config # enable ft1000 module: CONFIG_FT1000=m
+make prepare # setup FT1000 as module
+make modules_prepare
+make SUBDIRS=drivers/staging/ft1000/ft1000-usb modules
+cp drivers/staging/ft1000/ft1000-usb/ft1000.ko /lib/modules/3.2.0-4-686-pae/kernel/drivers/staging/
+depmod
+modprobe ft1000
+\stoptyping
+
+\goto{http://askubuntu.com/questions/168279/how-do-i-build-a-single-in-tree-kernel-module}

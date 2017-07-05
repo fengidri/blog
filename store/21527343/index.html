@@ -1,0 +1,144 @@
+<p>
+
+当一个对象不能从缓存中得到, 那么请求会代理到源站.
+对于常用的对象, 可能会有很多几乎同时的请求到源站.
+可能淹没它，或者相关的资源. 在Traffic Server里有几种特性
+可以适用于这种情景.</p>
+
+<h3>Read While Writer</h3>
+<p>当Traffic Server去抓取从原点，并在接收到响应的东西，
+一旦已经接收background_fill_completed_threshold%的对象
+那么任何数量的客户端可以被允许从缓存中提取数据.</p>
+
+<p>一些其它的 HTTP 代理服务器, 可以让用户立即读取响应,
+当服务器开始接收源站的数据. 而Traffic Server在 HTTP 响应在读取
+并处理完成的前还不能允许客户端读取.
+这是Traffic Server视 缓存刷新与冷缓存相同而带来的副使用.
+这种做法让Traffic Server不能识别一个响应应不应该缓存.</p>
+
+<p>从源站的不缓存响应, 一般是因为对于不同的用户,
+内容不同. Traffic Server在得知这是一个应该缓存的对象之前是不会开启
+read-while-writer.</p>
+
+<p>下面的位于<b>records.config</b>中的选项会开启read-while-writer功能.
+<pre>
+CONFIG proxy.config.cache.enable_read_while_writer INT 1
+CONFIG proxy.config.http.background_fill_active_timeout INT 0
+CONFIG proxy.config.http.background_fill_completed_threshold FLOAT 0.000000
+CONFIG proxy.config.cache.max_doc_size INT 0
+</pre>
+</p>
+
+<p>
+    <ul>
+
+        <li>proxy.config.cache.enable_read_while_writer 设置为1 开启read-while-writer,
+0 关闭read-while-writer.
+
+        <li>background fill(proxy.config.http.background_fill_active_timeout
+proxy.config.http.background_fill_completed_threshold)
+特性对于每一个请求都应该是起作用的.
+这是很有必要当用户abourt(客户第一次请求资源, 使得Traffic Server连接源站).
+而其它的client 端才有机会接管.</p>
+
+<p>因此, 你应该设置background filltimeouts 和 threshold 为0, 这样就可以
+保证不会超时, 并总是起作用.</p>
+
+<p>
+        <li>proxy.config.cache.max_doc_size 应该不做限制(设置为0), 因为缓存对象的
+大小可能是未知的, 如果不这样, 那么在缓存对象做为服务端的时候, 会出现
+disconnect.
+    </ul></p>
+
+<p>如果这些开启了, 那么 其它行为会类似于<b>Squid’s Collapsed Forwarding</b>当然并不一样.</p>
+
+<p>除了上次这些, proxy.config.cache.read_while_writer.max_retries
+和
+proxy.config.cache.read_while_writer.delay
+会控制Traffic Server在下载完成缓存的第一个fragment 之前尝试去触发read-while-writer的重试次数.
+<pre>
+CONFIG proxy.config.cache.read_while_writer.max_retries INT 10
+
+CONFIG proxy.config.cache.read_while_writer.delay INT 50
+</pre>
+</p>
+
+<h3>模糊再验证</h3>
+<p>Traffic Server可以在一个缓存对象变成stale 前对其进行验证.
+在<b>records.config</b>中的设置如下:
+<pre>
+CONFIG proxy.config.http.cache.fuzz.time INT 240
+CONFIG proxy.config.http.cache.fuzz.min_time INT 0
+CONFIG proxy.config.http.cache.fuzz.probability FLOAT 0.005
+</pre>
+</p>
+
+<p>当缓存对象在完成 stale 前的proxy.config.http.cache.fuzz.time 内收到
+的请求, 会有一些不同((proxy.config.http.cache.fuzz.probability == 0.5%)
+会触发一个到源站的验证.</p>
+
+<p><b>注意:</b>在验证的过程中, 请求的缓存不会使用, 请求会被代理到源站.</p>
+
+<p>对于每秒只有几个请求的对象，
+这些设置 在缓存对象变得陈旧之前 将提供一个相当低的重新验证 的概率。
+这个功能通常不需要设置这样的速度，不过，赔率只是在要过时的时候有一个或少量到源站的连接.</p>
+
+<p>一旦请求数增大, 同样的fuzz.probability 也会在资源过期前
+导致更大的机会发生重新验证.
+这可以防止在高负载的情况下多个客户出现同时触发对于源服务器的请求.
+如果没有启用模糊验证, 就可以出现这种问题.</p>
+
+<p>这些设置可以通过 remap 规则和插件进行重置. 如果有必要可以针对每一个请求进行调整.</p>
+
+<p>最后, proxy.config.http.cache.fuzz.min_time 用于在不同的时间段对于资源不同的
+TTL 的概率进行评估. 小 TTL 的资源会在 fuzz.min_time 的时候开始 "olling the revalidation dice",
+而大 TTL 的资源会在 fuzz.time 的时候开始.</p>
+
+<p>类似对于对数函数的算法计算出重新验证的开始时间(在fuzz.min_time 与 fuzz.time 之间).
+当object 越接近过期时间, 进行重新验证的概率更高.
+默认情况下这些设置没有开启, 如果你的资源的 ttl 比较小, 就应该开启.
+注意: 这些配置是可以重置的, 所以可以在插件或 remap.config 里进行设置.</p>
+
+<p>这些配置类似于 Squid 的 refresh_stale_hit 选项.</p>
+
+<p></p>
+
+<h3>Open Read Retry Timeout</h3>
+<p>Open Read Retry Timeout试图减少对于同一个资源的并发请求的数目。
+当一个资源正在从源站获取数据, 随后的请求会
+在确定这个资源能否从cache 里读取数据前
+等待 proxy.config.http.cache.open_read_retry_time 毫秒
+如果还在获取数据, 那么会重试
+proxy.config.http.cache.max_open_read_retries 次.
+所以随后的请求可能会等待:
+max_open_read_retries x open_read_retry_time 毫秒才
+建立一个自己的到源站的连接.
+如果这两个分别设置成5, 10, 连接会等待
+50ms 直到可以的话, 从前面的请求的响应来得到数据.</p>
+
+<p><b>重点注意:</b>如果资源不能缓存, 这个设置是不当的.
+否则, 请求一个有效的资源的请求会变成串行化, 后续的请求
+至少要等待open_read_retry_time 毫秒才会代理到源站.</p>
+
+<p>对于可以缓存的资源, 把这些设置与read-while-writer一起使用是很明智地
+(传输的时候大于max_open_read_retries x open_read_retry_time).
+而如果不开启read-while-writer, 而最初的请求还在进行中, 不只是
+后续的请求会被延迟最大的时间, 而这些请求还会被代理到源站,
+而这实际是不必要的.</p>
+
+<p>因为 ATS 目前支持针对于每一个请求或 remap rule 来进行设置,
+所以你可以更加适当更加容易地进行配置.</p>
+
+<p><pre>
+CONFIG proxy.config.http.cache.max_open_read_retries INT -1
+CONFIG proxy.config.http.cache.open_read_retry_time INT 10
+</pre>
+</p>
+
+<h4>Open Write Fail Action</h4>
+<p>除了, 以上的设置, Traffic Server还支持一个新的设置 proxy.config.http.cache.open_write_fail_action.
+这个选项可以进一步地降底对于同一资源的多并发的请求代理到源站.
+by either returning a stale copy, in case of hit-stale or an error in case of cache miss for all but one of the requests.</p>
+
+<h3>参考</h3>
+<p>&nbsp;<a href=https://docs.trafficserver.apache.org/en/latest/admin/http-proxy-caching.en.html#reducing-origin-server-requests-avoiding-the-thundering-herd >https://docs.trafficserver.apache.org/en/latest/admin/http-proxy-caching.en.html#reducing-origin-server-requests-avoiding-the-thundering-herd</a>&nbsp;</p>

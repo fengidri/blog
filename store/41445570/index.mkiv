@@ -1,0 +1,164 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Title: backing 与 bcache0 的关系
+%Class: bcache
+%Post:1
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+假设这里 /dev/sdc 被实现成了 /dev/bcache0. 那在操作 /dev/bcache0 的时候
+与 /dev/sdc 是什么关系的.
+
+换一种说法, 读取 /dev/bcache0 的 offset 1024 那么对应的是 /dev/sdc 上的哪里呢.
+
+\section{layout}
+我们还是先说明一下 /dev/sdc 的布局. 其实 make-bcache 的行为和软件分区是一样的,
+都是在磁盘的开头写入了一些数据. 这些数据就是我们通过 bcache-super-show 看到的.
+
+\starttyping
+static void write_sb(char *dev, unsigned block_size, unsigned bucket_size,
+		     bool writeback, bool discard, bool wipe_bcache,
+		     unsigned cache_replacement_policy,
+		     uint64_t data_offset,
+		     uuid_t set_uuid, bool bdev)
+{
+	int fd;
+	char uuid_str[40], set_uuid_str[40], zeroes[SB_START] = {0};
+	struct cache_sb sb;
+	blkid_probe pr;
+
+    .......
+
+	if (pread(fd, &sb, sizeof(sb), SB_START) != sizeof(sb))
+		exit(EXIT_FAILURE);
+
+    .......
+
+	/* Zero start of disk */
+	if (pwrite(fd, zeroes, SB_START, 0) != SB_START) {
+		perror("write error\n");
+		exit(EXIT_FAILURE);
+	}
+	/* Write superblock */
+	if (pwrite(fd, &sb, sizeof(sb), SB_START) != sizeof(sb)) {
+		perror("write error\n");
+		exit(EXIT_FAILURE);
+	}
+    .......
+}
+\stoptyping
+SB_START 是 4k. 这样就可以看出来 /dev/sdc 在 make-bcache 之后前 4k 的空间被清零了.
+在 4k 的位置写入了一些数据.
+
+
+\section{dev.data.first_sector}
+这些数据中有一个值是:
+\starttyping
+sb.magic		ok
+sb.first_sector		8 [match]
+sb.csum			1549C9F4A85894C1 [match]
+sb.version		1 [backing device]
+
+dev.label		(empty)
+dev.uuid		bc2bcdc3-cee2-46e6-9b3c-6a85ef78af3d
+dev.sectors_per_block	1
+dev.sectors_per_bucket	1024
+dev.data.first_sector	16
+dev.data.cache_mode	0 [writethrough]
+dev.data.cache_state	0 [detached]
+
+cset.uuid		db15448b-82e9-4a2b-bd97-fed21af6b749
+\stoptyping
+dev.data.first_sector 就是对于 backing 设备的使用的数据开始的位置. 16 表示的是 8k = 512 * 16;
+
+在内核的 request.c 里可以看到如下的代码:
+\starttyping
+static void cached_dev_make_request(struct request_queue *q, struct bio *bio)
+{
+	struct search *s;
+	struct bcache_device *d = bio->bi_bdev->bd_disk->private_data;
+	struct cached_dev *dc = container_of(d, struct cached_dev, disk);
+	int rw = bio_data_dir(bio);
+
+	generic_start_io_acct(rw, bio_sectors(bio), &d->disk->part0);
+
+	bio->bi_bdev = dc->bdev;
+	bio->bi_iter.bi_sector += dc->sb.data_offset; // 注意这里
+
+	if (cached_dev_get(dc)) {
+		s = search_alloc(bio, d);
+		trace_bcache_request_start(s->d, bio);
+
+		if (!bio->bi_iter.bi_size) {
+			/*
+			 * can't call bch_journal_meta from under
+			 * generic_make_request
+			 */
+			continue_at_nobarrier(&s->cl,
+					      cached_dev_nodata,
+					      bcache_wq);
+		} else {
+			s->iop.bypass = check_should_bypass(dc, bio);
+
+			if (rw)
+				cached_dev_write(dc, s);
+			else
+				cached_dev_read(dc, s);
+		}
+	} else {
+		if ((bio->bi_rw & REQ_DISCARD) &&
+		    !blk_queue_discard(bdev_get_queue(dc->bdev)))
+			bio_endio(bio, 0);
+		else
+			bch_generic_make_request(bio, &d->bio_split_hook);
+	}
+}
+\stoptyping
+此函数用于处理上层的请求, 对于请求的 bio 结构, 函数开始直接操作增加 dc->sb.data_offset.
+也就是说 /dev/sdc 上的偏移与 /dev/bcache0 相关了dc->sb.data_offset.
+
+\section{Set}
+make-bcache 的 help 如下:
+\starttyping
+Usage: make-bcache [options] device
+	-C, --cache		Format a cache device
+	-B, --bdev		Format a backing device
+	-b, --bucket		bucket size
+	-w, --block		block size (hard sector size of SSD, often 2k)
+	-o, --data-offset	data offset in sectors
+	    --cset-uuid		UUID for the cache set
+	    --writeback		enable writeback
+	    --discard		enable discards
+	    --cache_replacement_policy=(lru|fifo)
+	-h, --help		display this help and exit
+\stoptyping
+可以通过 -o 进行修改.
+
+这个值有一个限制不能小于 512 * 16 = 8k;
+
+make_bcache.c 里的代码如下:
+\starttyping
+		case o:
+			data_offset = atoll(optarg);
+			if (data_offset < BDEV_DATA_START_DEFAULT) {
+				fprintf(stderr, "Bad data offset; minimum %d sectors\n",
+				       BDEV_DATA_START_DEFAULT);
+				exit(EXIT_FAILURE);
+			}
+			break;
+
+\stoptyping
+
+kernel bcache/super.c 的代码如下:
+\starttyping
+	case BCACHE_SB_VERSION_BDEV:
+		sb->data_offset	= BDEV_DATA_START_DEFAULT;
+		break;
+	case BCACHE_SB_VERSION_BDEV_WITH_OFFSET:
+		sb->data_offset	= le64_to_cpu(s->data_offset);
+
+		err = "Bad data offset";
+		if (sb->data_offset < BDEV_DATA_START_DEFAULT)
+			goto err;
+
+		break;
+\stoptyping
+BDEV_DATA_START_DEFAULT 的值都是 16.

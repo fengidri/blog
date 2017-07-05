@@ -1,0 +1,43 @@
+<p><pre>
+/*
+ * TCP Reno congestion control
+ * This is special case used for fallback as well.
+ */
+/* This is Jacobson's slow start and congestion avoidance.
+ * SIGCOMM '88, p. 328.
+ */
+void tcp_reno_cong_avoid(struct sock *sk, u32 ack, u32 in_flight)
+{
+         struct tcp_sock *tp = tcp_sk(sk);  // 获取tcp_sock
+         // 函数返回1说明拥塞窗口被限制，我们需要增加拥塞窗口，否则的话，就不需要增加拥塞窗口。
+         if (!tcp_is_cwnd_limited(sk, in_flight))  // 是否已经达到拥塞窗口的限制值（1）
+                 return;
+
+         /* In "safe" area, increase. */
+         if (tp-&gt;snd_cwnd &lt;= tp-&gt;snd_ssthresh)   // 如果发送窗口大小还 比 慢开始门限小，那么还是慢开始处理
+                 tcp_slow_start(tp);   // 下面进入慢开始处理 (2)
+         /* In dangerous area, increase slowly. */
+         else if (sysctl_tcp_abc) {   // 否则进入拥塞避免阶段！！每个RTT时间就加1
+                 /* RFC3465: Appropriate Byte Count
+                  * increase once for each full cwnd acked   // 基本思想就是：经过一个RTT时间就将snd_cwnd增加一个单位！
+                  */                                         // 一个RTT时间可以认为是当前拥塞窗口发送出去的数据的所有ACK都被接收到
+                 if (tp-&gt;bytes_acked &gt;= tp-&gt;snd_cwnd*tp-&gt;mss_cache) {   // 当前的拥塞窗口的所有段都被ack了，窗口才被允许增加。
+                         tp-&gt;bytes_acked -= tp-&gt;snd_cwnd*tp-&gt;mss_cache; // ACK处理过的及删除去了
+                         if (tp-&gt;snd_cwnd &lt; tp-&gt;snd_cwnd_clamp)   // 不允许发送窗口大小超过snd_cwnd_clamp值
+                                 tp-&gt;snd_cwnd++;
+                 }
+         } else {   // 每接收到一个ACK，窗口增大(1/snd_cwnd)，使用cnt计数
+                 /* In theory this is tp-&gt;snd_cwnd += 1 / tp-&gt;snd_cwnd */
+                 if (tp-&gt;snd_cwnd_cnt &gt;= tp-&gt;snd_cwnd) {        // 线性增长计数器 &gt;= 阈值
+                         if (tp-&gt;snd_cwnd &lt; tp-&gt;snd_cwnd_clamp) // 如果窗口还没有达到阈值
+                                 tp-&gt;snd_cwnd++;                // 那么++增大窗口
+                         tp-&gt;snd_cwnd_cnt = 0;
+                 } else
+                         tp-&gt;snd_cwnd_cnt++;   // 否则仅仅是增大线性递增计数器
+         }
+}
+</pre>
+</p>
+
+<h3>参考</h3>
+<p>&nbsp;<a href=http://blog.csdn.net/shanshanpt/article/details/22201847 >http://blog.csdn.net/shanshanpt/article/details/22201847</a>&nbsp;</p>

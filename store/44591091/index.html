@@ -1,0 +1,381 @@
+<p></p>
+
+<h3>说明</h3>
+<p>RTO:Retransmission TimeOut 即重传超时时间。</p>
+
+<p>TCP超时与重传中一个很最重要的部分是对一个给定连接的往返时间（RTT）的测量。
+由于网络流量的变化， 这个时间会相应地发生改变，TCP需要跟踪这些变化并动态调整超时时间RTO。</p>
+
+<p>RFC2988中是这样描述RTO的：
+<pre>
+“The Transmission Control Protocol (TCP) uses a retransmission timer to ensure
+data delivery in the absence of any feedback from the remote data receiver. The
+duration of this timer is referred to as RTO (retransmission timeout).”
+</pre>
+
+RTT（Round Trip Time）由三部分组成：
+
+    <ul>
+
+        <li>链路的传播时间（propagation delay）、
+
+        <li>末端系统的处理时间、
+
+        <li>路由器缓存中的排队和处理时间（queuing delay）。
+    </ul>
+其中，前两个部分的值对于一个TCP连接相对固定，路由器缓存中的排队和处理时间会随着整个网络拥塞程度
+的变化而变化。所以RTT的变化在一定程度上反应了网络的拥塞程度。</p>
+
+<h3>平均偏差(mdev)</h3>
+<p><img src=http://img.my.csdn.net/uploads/201206/07/1339051524_5255.png >计算平均偏差可以知道 数据的波动情况, RTT 的平均偏差可以反应其抖动情况.</p>
+
+<h3>测量方法</h3>
+<p></p>
+
+<h4>TCP Timestamp</h4>
+<p>在 TCP 选项中有 Timestamp 选项, 可以用于计算 RTT. 对方在回复的时候, 应该把发送方
+带出动的 Timestamp 回显回来. 这个时候, 就可以使用当前时间 - 数据包中的回显时间 得到 RTT.</p>
+
+<h4>重传队列中数据包的TCP控制块</h4>
+<p>在TCP重传队列中保存着发送而未被确认的数据包，数据包skb中的TCP控制块包含着一个变量，
+tcp_skb_cb->when，记录了该数据包的第一次发送时间。
+当收到包对应的 ACK 的时候可以计算:
+<pre>
+RTT = 当前时间 - when
+</pre>
+</p>
+
+<h3>实现</h3>
+<p>发送每收到一个 ACK, 会使用 tcp_ack 进行处理.
+tcp_ack 中会使用 tcp_clean_rtx_queue 来删除重传队列中已经被确认的数据段.
+如果是重传的数据包, 这个时候 rtt 的测量是不正确的 seq_rtt = -1;
+正常情况下seq_rtt = now -scb->when.
+之后调用 tcp_ack_update_rtt(sk, flag, seq_rtt) 来更新 RTT 和 RTO.</p>
+
+<p><pre>
+static inline void tcp_ack_update_rtt (struct sock *sk, const in flag,
+        const s32 seq_rtt)
+{
+    const struct tcp_sock *tp = tcp_sk(sk);
+    /* Note that peer MAY send zero echo. In this case it is ignored. (rfc1323) */
+    /* 如果有启用TCP Timestamp选项，且接收方的回显不为0*/
+    if (tp-&gt;rx_opt.saw_tstamp &amp;&amp; tp-&gt;rx_opt.rcv_tsecr)
+        tcp_ack_saw_tstamp(sk, flag); /* 方法一*/
+
+    else if (seq_rtt &gt;= 0) /* 不能是重传数据包的ACK */
+        tcp_ack_no_tstamp(sk, seq_rtt, flag); /* 方法二*/
+}
+</pre>
+
+<pre>
+/* Read draft-ietf-tcplw-high-performance before mucking with this code.
+ * (Supersedes RFC1323)
+ */
+static void tcp_ack_saw_tstamp(struct sock *sk, int flag)
+{
+    /* RTTM Rule : A TSecr value received in a segment is used to update the
+     * averaged RTT measurement only if the segment acknowledges some new
+     * data, i.e., only if it advances the left edge of the send window.
+     *
+     * See draft-ietf-tcplw-high-performance-00, section 3.3.
+     * 1998/04/10 Andrey V. Savochkin saw@msu.ru
+     *
+     * Changed : reset backoff as soon as we see the first valid sample.
+     * If we do not, we get strongly overestimated rto. With timestamps
+     * samples are accepted even from very old segments: f.e., when
+     * rtt = 1 increases to 8, we retransmit 5 times and after 8 seconds
+     * delayed answer arrives rto becomes 120 seconds! If at least one
+     * of segments in window is lost... Volia.
+     * ——ANK(010210)
+     */
+    struct tcp_sock *tp = tcp_sk(sk);
+    /* RTT采样值：now - rcv_tsecr */
+    tcp_valid_rtt_meas(sk, tcp_time_stamp - tp-&gt;rx_opt.rcv_tsecr);
+}
+</pre>
+</p>
+
+<p><pre>
+
+static void tcp_ack_no_tstamp(struct sock *sk, u32 seq_rtt, int flag)
+{
+    /* We don't have a timestsamp. Can only use packets that are not
+     * retransmitted to determine rtt estimates. Also, we must not reset
+     * the backoff for rto until we get a non-retransmitted packet. This
+     * allows us to deal with a situation where the network delay has
+     * increased suddenly. I.e. Karn's algorithm. (SIGCOMM '87, p5.)
+     */
+    if (flag &amp; FLAG_RETRANS_DATA_ACKED)
+        return; /* 如果ACK确认的是重传的数据包，则不进行RTT采样*/
+    /* RTT采样值：seq_rtt，这个值是在tcp_clean_rtx_queue()中计算得到的。*/
+    tcp_valid_rtt_meas(sk, seq_rtt);
+}
+</pre>
+</p>
+
+<h3>RTO 计算原理</h3>
+<p>变量:
+<pre>
+struct tcp_sock {
+    ...
+
+    /* RTT measurement */
+    u32 srtt; /* smoothed round trip time &lt;&lt; 3 */
+    u32 mdev; /* medium deviation */
+    u32 mdev_max; /* maximal mdev for the last rtt period */
+    u32 rttvar /* smoothed mdev_max */
+    u32 rtt_seq; /* sequence number to update rttvar */
+
+    ...
+}
+</pre>
+</p>
+
+<p>
+    <ul>
+
+        <li>srtt: 平滑后的 RTT, 代表着当前的 RTT 值. 每收到一个 ACK 更新一次. 为了避免浮点运算，它是实际RTT值的8倍。
+
+        <li>mdev: RTT 的平均偏差, 用来衡量RTT的抖动，每收到一个ACK更新一次。
+
+        <li>mdev_max: 为上一个 RTT 内的最大mdev，代表上个 RTT 内时延的波动情况，有效期为一个RTT。
+
+        <li>rttvar: 为mdev_max的平滑值，可升可降，代表着连接的抖动情况，在连接断开前都有效。
+    </ul></p>
+
+<p>“To compute the current RTO, a TCP sender maintains two state variables,
+SRTT (smoothed round-trip time) and RTTVAR (round-trip time variation).”</p>
+
+<p><pre>
+RTO = srtt &gt;&gt; 3 + rttvar.
+</pre>
+</p>
+
+<h4>第一个 RTT 测量值</h4>
+<p><pre>
+srtt = rtt &lt;&lt; 3;
+mdev = rtt &lt;&lt; 1;
+</pre>
+</p>
+
+<p>mdev_max = rttvar = max(mdev, rto_min);
+所以，获得第一个RTT测量值后的RTO = rtt + rttvar，
+如果mdev = 2*rtt > rto_min， 那么RTO = 3 * rtt；否则，RTO = rtt + rto_min。</p>
+
+<h4>第 N 个 RTT 测量值</h4>
+<p></p>
+
+<h5>srtt的更新</h5>
+<p><pre>
+new_srtt = 7/8 old_srtt + 1/8 rtt
+</pre>
+</p>
+
+<h5>mdev的更新</h5>
+<p><pre>
+err = rtt - old_srtt
+</pre>
+</p>
+
+<p>
+    <ul>
+
+        <li>当RTT变小时，即err < 0时
+ 
+    <ul>
+
+        <li>如果|err| > 1/4 old_mdev，则new_mdev = 31/32 old_mdev + 1/8 |err|</p>
+
+<p> 此时：
+ <pre>
+           old_mdev &lt; new_mdev &lt; 3/4 old_mdev + |err|
+       </pre>
+</p>
+
+<p> new_mdev有稍微变大，但是增大得不多。由于RTT是变小，所以RTO也要变小，如果
+ new_mdev增大很多(比如：new_mdev = 3/4 old_mdev + |err|)，就会导致RTO变大，不符合
+ 我们的预期。
+ “This is similar to one of Eifel findings. Eifel blocks mdev updates when rtt decreases.
+ This solution is a bit different : we use finer gain for mdev in this case (alpha * beta).
+ Like Eifel it also prevents growth of rto, but also it limits too fast rto decreases, happening
+ in pure Eifel.”</p>
+
+<p> 
+        <li>如果|err| <= 1/4 old_mdev，则new_mdev = 3/4 old_mdev + |err|</p>
+
+<p> 此时：new_mdev < old_mdev
+ new_mdev变小，会导致RTO变小，符合我们的预期。
+
+    </ul></p>
+
+<p>
+        <li>当RTT变大时，即err > 0时</p>
+
+<p><pre>
+new_mdev = 3/4 old_mdev + |err|
+</pre>
+
+此时：new_mdev > old_mdev
+new_mdev变大，会导致RTO变大，这也符合我们的预期。
+    </ul></p>
+
+<h5>mdev_max和rttvar的更新</h5>
+<p>在每个RTT开始时，mdev_max = rto_min。
+如果在此RTO内，有更大的mdev，则更新mdev_max。
+如果mdev_max > rttvar，则 rttvar = mdev_max;
+否则，本RTT结束后，rttvar -= (rttvar - mdev_max) >> 2。
+这样一来，就可以通过mdev_max来调节rttvar，间接的调节RTO。</p>
+
+<h3>RTO 计算实现</h3>
+<p>不管是方法一还是方法二，最终都调用tcp_valid_rtt_meas()来更新RTT和RTO。
+<pre>
+/* seq_rtt为此次得到的RTT测量值。*/
+void tcp_valid_rtt_meas(struct sock *sk, u32 seq_rtt)
+{
+    tcp_rtt_estimator(sk, seq_rtt); /* 更新相关值*/
+    tcp_set_rto(sk); /*设置新的RTO*/
+    inet_csk(sk)-&gt;icsk_backoff = 0; /* 清零退避指数*/
+}
+</pre>
+</p>
+
+<p>RTO = srtt >> 8 + rttvar。而srtt和rttvar的更新都是在tcp_rtt_estimator()中进行的。
+<pre>
+/* Called to compute a smoothed rtt estimate. The data fed to this
+ * routine either comes from timestamps, or from segments that were
+ * known _not_ to have been retransmitted [see Karn/Partridge Proceedings
+ * SIGCOMM 87]. The algorithm is from the SIGCOMM 88 piece by Van
+ * Jacobson.
+ * NOTE : the next three routines used to be one big routine.
+ * To save cycles in the RFC 1323 implementation it was better to break it
+ * up into three procedures. ——erics
+ */
+
+static void tcp_rtt_estimator (struct sock *sk, const __u32 mrtt)
+{
+    struct tcp_sock *tp = tcp_sk(sk);
+    long m = mrtt; /*此为得到的新的RTT测量值*/
+
+    /* The following amusing code comes from Jacobson's article in
+     * SIGCOMM '88. Note that rtt and mdev are scaled versions of rtt and
+     * mean deviation. This is designed to be as fast as possible
+     * m stands for "measurement".
+     *
+     * On a 1990 paper the rto value is changed to :
+     * RTO = rtt + 4 * mdev
+     *
+     * Funny. This algorithm seems to be very broken.
+     * These formulae increase RTO, when it should be decreased, increase
+     * too slowly, when it should be increased quickly, decrease too quickly
+     * etc. I guess in BSD RTO takes ONE value, so that it is absolutely does
+     * not matter how to calculate it. Seems, it was trap that VJ failed to
+     * avoid. 8)
+     */
+    if (m == 0)
+        m = 1; /* RTT的采样值不能为0 */
+
+    /* 不是得到第一个RTT采样*/
+    if (tp-&gt;srtt != 0) {
+        m -= (tp-&gt;srtt &gt;&gt; 3); /* m is now error in rtt est */
+        tp-&gt;srtt += m; /* rtt = 7/8 rtt + 1/8 new ，更新srtt*/
+
+        if (m &lt; 0) { /*RTT变小*/
+            m = -m; /* m is now abs(error) */
+            m -= (tp-&gt;mdev &gt;&gt; 2); /* similar update on mdev */
+
+            /* This is similar to one of Eifel findings.
+             * Eifel blocks mdev updates when rtt decreases.
+             * This solution is a bit different : we use finer gain
+             * mdev in this case (alpha * beta).
+             * Like Eifel it also prevents growth of rto, but also it
+             * limits too fast rto decreases, happening in pure Eifel.
+             */
+             if (m &gt; 0) /* |err| &gt; 1/4 mdev */
+                 m &gt;&gt;= 3;
+
+        } else { /* RTT变大 */
+            m -= (tp-&gt;mdev &gt;&gt; 2); /* similar update on mdev */
+        }
+
+        tp-&gt;mdev += m; /* mdev = 3/4 mdev + 1/4 new，更新mdev */
+
+        /* 更新mdev_max和rttvar */
+        if (tp-&gt;mdev &gt; tp-&gt;mdev_max) {
+            tp-&gt;mdev_max = tp-&gt;mdev;
+            if (tp-&gt;mdev_max &gt; tp-&gt;rttvar )
+                tp-&gt;rttvar = tp-&gt;mdev_max;
+        }
+
+       /* 过了一个RTT了，更新mdev_max和rttvar */
+        if (after(tp-&gt;snd_una, tp-&gt;rtt_seq)) {
+            if (tp-&gt;mdev_max &lt; tp-&gt;rttvar)/*减小rttvar */
+                tp-&gt;rttvar -= (tp-&gt;rttvar - tp-&gt;mdev_max) &gt;&gt; 2;
+            tp-&gt;rtt_seq = tp-&gt;snd_nxt;
+            tp-&gt;mdev_max = tcp_rto_min(sk); /*重置mdev_max */
+        }
+
+    } else {
+    /* 获得第一个RTT采样*/
+        /* no previous measure. */
+        tp-&gt;srtt = m &lt;&lt; 3; /* take the measured time to be rtt */
+        tp-&gt;mdev = m &lt;&lt; 1; /* make sure rto = 3 * rtt */
+        tp-&gt;mdev_max = tp-&gt;rttvar = max(tp-&gt;mdev, tcp_rto_min(sk));
+        tp-&gt;rtt_seq = tp-&gt;snd_nxt; /*设置更新mdev_max的时间*/
+    }
+}
+</pre>
+</p>
+
+<p>rto_min的取值如下：
+<pre>
+
+/* 最大的RTO为120s，指数退避时不能超过这个值 */
+#define TCP_RTO_MAX ((unsigned) (120*HZ))
+
+/* 最小的RTO为200ms，rttvar不能低于这个值 */
+#define TCP_RTO_MIN ((unsigned) (HZ / 5))
+
+/* 还没有计算出RTO值前的RTO初始值，为1s */
+#define TCP_TIMEOUT_INIT ((unsigned) (1 * HZ))
+
+/* Compute the actual rto_min value */
+static inline u32 tcp_rto_min (struct sock *sk)
+{
+    const struct dst_entry *dst = __sk_dst_get(sk);
+    u32 rto_min = TCP_RTO_MIN;
+
+    /*如果路由缓存中存在RTO_MIN，则取其为最小RTO*/
+    if (dst &amp;&amp; dst_metric_locked(dst, RTAX_RTO_MIN))
+        rto_min = dst_metric_rtt(dst, RTAX_RTO_MIN));
+    return rto_min;
+}
+</pre>
+</p>
+
+<p>RTO的设置：
+<pre>
+/* Calculate rto without backoff. This is the second half of Van Jacobson's
+ * routine referred to above.
+ */
+static inline void tcp_set_rto(struct sock *sk)
+{
+    const struct tcp_sock *tp = tcp_sk(sk);
+    inet_csk(sk)-&gt;icsk_rto = __tcp_set_rto(tp);
+    tcp_bound_rto(sk);
+}
+
+static inline u32 __tcp_set_rto(const struct tcp_sock *tp)
+{
+    return (tp-&gt;srtt &gt;&gt; 3) + tp-&gt;rttvar;
+}
+
+static inline void tcp_bound_rto(const struct sock *sk)
+{
+    if (inet_csk(sk)-&gt;icsk_rto &gt; TCP_RTO_MAX)
+        inet_csk(sk)-&gt;icsk_rto = TCP_RTO_MAX;
+}
+</pre>
+</p>
+
+<h3>参考</h3>
+<p>&nbsp;<a href=http://blog.csdn.net/zhangskd/article/details/7196707 >http://blog.csdn.net/zhangskd/article/details/7196707</a>&nbsp;</p>

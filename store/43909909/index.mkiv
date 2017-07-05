@@ -1,0 +1,38 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Title: bcache 操作
+%Class: kernel
+%Post:1
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+对于 bcache 磁盘分成 backing 与 cache.
+使用磁盘之前要在磁盘上写入一些bcache 的信息.
+
+加载 bcache 之后, /sys/fs/bcache/ 下会列出可用的
+
+制做后端磁盘:
+\starttyping
+make-bcache -B /dev/sde
+\stoptyping
+
+制做缓存磁盘:
+\starttyping
+make-bcache -C /dev/sdf
+\stoptyping
+
+
+手动注册设备:
+\starttyping
+echo /dev/sde > /sys/fs/bcache/register
+echo /dev/sdf > /sys/fs/bcache/register
+\stoptyping
+
+设置 backing 的 cache 层:
+\starttyping
+echo cset.uuid > /sys/block/bcache0/bcache/attach
+\stoptyping
+
+
+backing 与 cache 分离:
+\starttyping
+echo 1 > /sys/block/bcache0/bcache/detach
+\stoptyping

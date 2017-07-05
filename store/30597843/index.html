@@ -1,0 +1,16 @@
+<p>
+connect 连接中可能会出现 timeout, 但是这里却有两情况.
+一是达到了tcp 的最大重次数, 产生的 timeout, 这个参数由
+tcp_syn_retires 进行控制. 默认 5 次, 大概是 180 秒.
+当达到这个时间的情况下返回的错误是:
+<pre>
+ETIMEDOUT	110	/* Connection timed out */
+</pre>
+</p>
+
+<p>另一个是通过 socketopt 设置的 timeout, 当这个时间达到了的情况下, 返回的
+错误是
+<pre>
+EINPROGRESS	115	/* Operation now in progress */.
+</pre>
+</p>

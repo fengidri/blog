@@ -1,0 +1,140 @@
+<p>
+</p>
+
+<h3>介绍</h3>
+<p>多级缓存由相互可以通信的多层缓存组成.
+Traffic Server支持多种多级缓存.
+所有的多级缓存都使用 parent 与child的概念.
+parent 在多级缓存中位于比较高的位置, 可以
+传递请求, 而child是针对于那些parent 而言的.</p>
+
+<h3>parent Caching</h3>
+<p>Traffic Server如果在本身的缓存中还能找到请求的资源,
+在最终向源站请求数据之前可以向parent 缓存查找.
+你可以给一个Traffic Server配制多个parent cache,
+这样的话, 如果一个parent 不可用了, 其它的
+会依次检查其它的 parent cache 直到可以找到,
+或没有更多的parent cache, 亦或者联系到了源站.
+Traffic Serverparent cache 同时支持 HTTP 或 HTTPS 请求.</p>
+
+<p>如果你不想所有的请求都检查parent cache. 可以简单地配置Traffic Server把
+某些请求(比如这些请求中包含有指定的 URLs)定向到源站.
+这可以在<b>parent.config</b>中进行设置.</p>
+
+<p>下图显示了设置有一个parent cache 的缓存的工作过程.
+这个请求中, 一个用户发送了一个请求给Traffic Server节点, 这个节点在多级缓存中
+是一个 child (因为它被配置为, 当请求查找失败的时候, 向parent 进行
+查找). 用户的请求资源是 MISS, 所以 Traffic Server会把请求重定向到parent cache,
+并在parent cache 里命中了. parent 把内容发送给了Traffic Server, Traffic Server会把
+资源进行缓存并把内容发送给用户.
+后续针对这个资源的请求会直接从Traffic Server的缓存中返回数据(直接数据过期).
+<img src=http://i3.tietuku.com/f4a25803e9c0c7e5.jpg >
+如果parent 也是 MISS , 那么 parent 会从源站取回数据(或者从其它的缓存,
+这要看parent 的配置了).</p>
+
+<h4>parent 故障转移</h4>
+<p>Traffic Server支持同时使用多个parent cache.
+这保证了, 如果一个parent cache 不能使用, 其它的
+parent 也可以提供服务.</p>
+
+<p>当胸给Traffic Server配制了多个parent cache, 当Traffic Server探测到一个parent 能不能使用,
+Traffic Server会把请求发送给其它的parent cache.
+当你设置有多个parent cache, 那么查询的顺序是依赖于在<b>parent.config</b>默认情况下, parent cache 会按照在配置文件中的顺序中进行查询.</p>
+
+<h4>为Traffic Server配置一个parent cache</h4>
+<p>为Traffic Server配置一个parent cache, 要进行以下的配置.</p>
+
+<p>你只用配置childcache.
+假设parent 节点配置了与child相同的源站. 不用为parent 节点进行配置.</p>
+
+<p>
+    <ul>
+
+        <li>开启 parent cache 功能
+ <pre>
+    CONFIG proxy.config.http.parent_proxy_routing_enable INT 1g
+    </pre>
+</p>
+
+<p>
+        <li>配置你想要使用做为处理 miss 请求的parent cache.
+当使用parent 故障转移, 你应该配置多个parent cache, 这样
+当parent cache 不可用的时候, 请求会重定向到其它的parent cache.</p>
+
+<p>
+        <li><b>parent.config</b>设置了parent 代理规则, 这些规则指定了
+你要用于处理 miss 请求的parent cache.
+    </ul></p>
+
+<p>下面的例子, 配置Traffic Server处理所有包含有规则<b>politics</b>并且url 以<b>/viewpoint</b>开头的请求直接到源站.</p>
+
+<p><pre>
+url_regex=politics prefix=/viewpoint go_direct=true
+</pre>
+</p>
+
+<p>下面的例子配置Traffic Server把所有以<b>http://host1</b>开头的
+的 miss 请求 到<b>parent1</b>. 如果<b>parent1</b>不能处理请求, 然后请求会转到<b>parent2</b>.
+因为 <b>round-robin=true</b>, Traffic Server会基于用户的ip
+循环到parent cache.
+<pre>
+dest_host=host1 scheme=http parent="parent1;parent2" round-robin=strict
+</pre>
+</p>
+
+<h3>对等的ICP</h3>
+<p>ICP(The Internet Cache Protocol ) 被多个缓存之间用于交换内容信息.
+ICP查询信息用于询问其它的缓存, 它们有没有存储特定的 URL 资源.
+ICP响应 hit 或 miss.
+缓存ICP信息只在 ICP节点之间进行交换, 可以接收 ICP信息
+的是相邻的缓存.
+一个ICP节点可以是一个兄弟缓存(处于多级缓存的同一层)
+也可以是一个父缓存(处于多级缓存的高一层).</p>
+
+<p>如果Traffic Server开启了ICP功能, 它会在缓存miss 的时候发送ICP查询给它的
+对等节点.
+如果没有命中, 但是设置了parent , 那么使用循环策略选择parent 。
+If no ICP parents exist, then Traffic Server forwards the request to its HTTP parents.
+如果没有parent HTTP缓存连接, 然后Traffic Server将请求转发到原始服务器。</p>
+
+<p>如果Traffic Server从一个ICP节点收到一个 命中的信息, 然后Traffic Server会发送
+HTTP 请求到ICP节点.
+However, it might turn out to be a cache miss because the original HTTP request contains header information that is not communicated by the ICP query.
+然而: 可能会变成一个 cache miss, 因为 ICP并没有交换 原始请求中的
+头信息.
+例如: 命中了, 但是并不是请求的备份.
+如果 ICP变成了 miss, 那么Traffic Server会中转请求到 HTTP 父cache 或 源站.</p>
+
+<p>要配置Traffic Server的ICP功能, 那么执行以下操作:
+
+    <ul>
+
+        <li>确定一个Traffic Server服务是不是只可以接收 ICP信息, 或它可以同时接收
+发送 ICP.</p>
+
+<p>
+        <li>确定Traffic Server可以发送信息直接到每一个ICP节点, 或通过组播通道发送
+消息.
+
+        <li>指定 ICP端口
+
+        <li>设置ICP请求 timeout
+
+        <li>确定在Traffic ServerICP通信中身份(兄弟 或 父)
+    </ul></p>
+
+<p>要配置如下选项:
+
+    <ul>
+
+        <li>proxy.config.icp.enabled
+
+        <li>proxy.config.icp.icp_port
+
+        <li>proxy.config.icp.multicast_enabled
+
+        <li>proxy.config.icp.query_timeout
+    </ul></p>
+
+<p>在配置文件目录中配置<b>icp.config</b>, 对于每一个ICP节点,
+在<b>icp.config</b>中设置对应的规则.</p>

@@ -1,0 +1,33 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Title: 列出 socket 的详细信息
+%Class: kernel
+%Post:1
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+socket 的信息比较复杂, 我们已经有了 netstat, ss 这样的命令, 但是一些信息,
+还是得不到. 比如 socket 的选项之类的. 在其它的平台上, netstat 其实是可以显示
+出来 socket 选项的. 但是 linux 上不可以.
+
+ss 其实信息是从 tcp_diags 模块得到的. 类似地, 我们可以自己编写一些内核模块, 以得到
+一些我们想要的信息.
+
+比如, 这一次我想得到每一个 socket 的使用的拥塞算法, 基于 \goto{knetstat}{https://github.com/veithen/knetstat}
+我自己加入了一些代码, 可以输出所有的 socket 使用的拥塞算法的名字.
+
+如下:
+\starttyping
+>cat /proc/net/tcpstat
+Recv-Q Send-Q Local Address           Foreign Address         Stat Diag Options
+     0      0 0.0.0.0:1989            0.0.0.0:*               LSTN      SO_REUSEADDR=1,SO_REUSEPORT=0,SO_KEEPALIVE=0,SO_CONG_NAME=cubic,TCP_NODELAY=0
+     0      0 127.0.0.1:37896         0.0.0.0:*               LSTN      SO_REUSEADDR=1,SO_REUSEPORT=0,SO_KEEPALIVE=0,SO_CONG_NAME=cubic,TCP_NODELAY=0
+     0      0 127.0.0.1:9480          0.0.0.0:*               LSTN      SO_REUSEADDR=1,SO_REUSEPORT=0,SO_KEEPALIVE=0,SO_CONG_NAME=cubic,TCP_NODELAY=0
+     0      0 127.0.0.1:6379          0.0.0.0:*               LSTN      SO_REUSEADDR=1,SO_REUSEPORT=0,SO_KEEPALIVE=0,SO_CONG_NAME=cubic,TCP_NODELAY=0
+     0      0 0.0.0.0:80              0.0.0.0:*               LSTN      SO_REUSEADDR=1,SO_REUSEPORT=0,SO_KEEPALIVE=0,SO_CONG_NAME=cubic,TCP_NODELAY=0
+     0      0 0.0.0.0:22              0.0.0.0:*               LSTN      SO_REUSEADDR=1,SO_REUSEPORT=0,SO_KEEPALIVE=0,SO_CONG_NAME=cubic,TCP_NODELAY=0
+     0      0 127.0.0.1:45561         0.0.0.0:*               LSTN      SO_REUSEADDR=1,SO_REUSEPORT=0,SO_KEEPALIVE=0,SO_CONG_NAME=cubic,TCP_NODELAY=0
+     0      0 127.0.0.1:46012         0.0.0.0:*               LSTN      SO_REUSEADDR=1,SO_REUSEPORT=0,SO_KEEPALIVE=0,SO_CONG_NAME=cubic,TCP_NODELAY=0
+     0      0 127.0.0.1:41535         0.0.0.0:*               LSTN      SO_REUSEADDR=1,SO_REUSEPORT=0,SO_KEEPALIVE=0,SO_CONG_NAME=cubic,TCP_NODELAY=0
+\stoptyping
+
+其中的 SO_CONG_NAME 就是 socket 使用的拥塞算法的名字. 修改之后的模块在\goto{这里}{https://github.com/fengidri/knetstat}

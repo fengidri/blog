@@ -1,0 +1,274 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Title: tcp/ip buffer
+%Class: tcp
+%Post:1
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+
+
+\section{sk_sndbuf and sk_recvbuf}
+
+而当进入establish状态之后,sock会自己调整sndbuf和rcvbuf.
+他是通过tcp_init_buffer_space来进行调整的.
+这个函数会调用tcp_fixup_rcvbuf和tcp_fixup_sndbuf来调整读写buf的大小.
+在新的版本里, 这里已经做了修改 tcp_fixup_sndbuf 改为 tcp_sendbuf_expand.
+
+这里有用到sk_userlock这个标记，这个标记主要就是用来标记SO_SNDBUF 和
+SO_RCVBUF套接口选项是否被设置。而是否设置对应的值为：
+\starttyping
+#define SOCK_SNDBUF_LOCK    1
+#define SOCK_RCVBUF_LOCK    2
+\stoptyping
+
+在设置 SO_SNDBUF 的时候要设置这个标记:
+
+\starttyping
+//首先设置sk_userlocks.
+sk->sk_userlocks |= SOCK_SNDBUF_LOCK;
+        if ((val * 2) < SOCK_MIN_SNDBUF)
+            sk->sk_sndbuf = SOCK_MIN_SNDBUF;
+        else
+            sk->sk_sndbuf = val * 2;
+\stoptyping
+
+因此内核里面的处理是这样的，如果用户已经通过套接字选项设置了读或者写buf的大小，
+那么这里将不会调整读写buf的大小，否则就进入tcp_fixup_XXX来调整大小。
+
+还有一个要注意的就是MAX_TCP_HEADER，这个值表示了TCP + IP + link layer headers 以及option的长度。
+
+\starttyping
+static void tcp_init_buffer_space(struct sock *sk)
+{
+    struct tcp_sock *tp = tcp_sk(sk);
+    int maxwin;
+
+///判断sk_userlocks，来决定是否需要fix缓冲区大小。
+    if (!(sk->sk_userlocks & SOCK_RCVBUF_LOCK))
+        tcp_fixup_rcvbuf(sk);
+    if (!(sk->sk_userlocks & SOCK_SNDBUF_LOCK))
+        tcp_fixup_sndbuf(sk);
+......................................
+
+}
+\stoptyping
+
+\starttyping
+static void tcp_fixup_sndbuf(struct sock *sk)
+{
+///首先通过mss，tcp头，以及sk_buff的大小，得到一个最小范围的sndmem。
+    int sndmem = tcp_sk(sk)->rx_opt.mss_clamp + MAX_TCP_HEADER + 16 +sizeof(struct sk_buff);
+
+///然后取sysctl_tcp_wmem[2]和3倍的sndmem之间的最小值。
+    if (sk->sk_sndbuf < 3 * sndmem)
+        sk->sk_sndbuf = min(3 * sndmem, sysctl_tcp_wmem[2]);
+}
+
+
+static void tcp_sndbuf_expand(struct sock *sk)
+{
+	const struct tcp_sock *tp = tcp_sk(sk);
+	int sndmem, per_mss;
+	u32 nr_segs;
+
+	/* Worst case is non GSO/TSO : each frame consumes one skb
+	 * and skb->head is kmalloced using power of two area of memory
+	 */
+	per_mss = max_t(u32, tp->rx_opt.mss_clamp, tp->mss_cache) +
+		  MAX_TCP_HEADER +
+		  SKB_DATA_ALIGN(sizeof(struct skb_shared_info));
+
+	per_mss = roundup_pow_of_two(per_mss) +
+		  SKB_DATA_ALIGN(sizeof(struct sk_buff));
+
+	nr_segs = max_t(u32, TCP_INIT_CWND, tp->snd_cwnd);
+	nr_segs = max_t(u32, nr_segs, tp->reordering + 1);
+
+	/* Fast Recovery (RFC 5681 3.2) :
+	 * Cubic needs 1.7 factor, rounded to 2 to include
+	 * extra cushion (application might react slowly to POLLOUT)
+	 */
+	sndmem = 2 * nr_segs * per_mss;
+
+	if (sk->sk_sndbuf < sndmem)
+		sk->sk_sndbuf = min(sndmem, sysctl_tcp_wmem[2]);
+}
+
+\stoptyping
+tcp_sndbuf_expand 这个函数会计算出一个 sndmem, 这个sndmem, 依赖于
+在三次握手过程中的一些信息, 比如 mss 之类的信息. 当 sndmem 大于 sk_sndbuf,
+说明 sk_sndbuf 太小了, 要进行扩展. 但是 sndmem 也不能太大, 最大只能是
+sysctl_tcp_wmem[2].
+
+sndmem 的计算来自于, 2 * 拥塞控制窗口 * mss.
+
+在连接之后, 当收到 ack 的时候, 也会对于发送缓存区大小进行调整.
+\starttyping
+static inline void tcp_data_snd_check(struct sock *sk)
+{
+    tcp_push_pending_frames(sk); /* 发送数据段 */
+    tcp_check_space(sk); /* 更新发送缓存 */
+}
+static void tcp_check_space(struct sock *sk)
+{
+    /* 如果发送队列中有skb被释放了 */
+    if (sock_flag(sk, SOCK_QUEUE_SHRUNK)) {
+
+        sock_reset_flag(sk, SOCK_QUEUE_SHRUNK);
+
+        /* 如果设置了同步发送时，发送缓存不足的标志 */
+        if (sk->sk_socket && test_bit(SOCK_NOSPACE, &sk->sk_socket->flags))
+            tcp_new_space(sk); /* 更新发送缓存 */
+    }
+}
+/* When incoming ACK allowed to free some skb from write_queue,
+ * we remember this event in flag SOCK_QUEUE_SHRUNK and wake up socket
+ * on the exit from tcp input handler.
+ */
+static void tcp_new_space(struct sock *sk)
+{
+    struct tcp_sock *tp = tcp_sk(sk);
+
+    /* 检查能否扩大发送缓存的上限 */
+    if (tcp_should_expand_sndbuf(sk)) {
+        tcp_sndbuf_expand(sk); /* 扩大发送缓存的上限 */
+        tp->snd_cwnd_stamp = tcp_time_stamp;
+    }
+
+    /* 检查是否需要触发有缓存可写事件 */
+    sk->sk_write_space(sk);
+}
+\stoptyping
+
+在什么情况下允许扩大发送缓存的上限呢？
+必须同时满足以下条件：
+\startitemize
+\item  sock有发送缓存不足的标志（上层函数作判断）。
+\item  用户没有使用SO_SNDBUF选项。
+\item  TCP层没有设置内存压力标志。
+\item  TCP层使用的内存小于tcp_mem[0]。
+\item  目前的拥塞控制窗口没有被完全使用掉。
+\stopitemize
+\starttyping
+static bool tcp_should_expand_sndbuf(const struct sock *sk)
+{
+    const struct tcp_sock *tp = tcp_sk(sk);
+
+    /* If the user specified a specific send buffer setting, do not modify it.
+     * 如果用户使用了SO_SNDBUF选项，就不自动调整了。
+     */
+    if (sk->sk_userlocks & SOCK_SNDBUF_LOCK)
+        return false;
+
+    /* If we are under global TCP memory pressure, do not expand.
+     * 如果TCP设置了内存压力标志，就不扩大发送缓存的上限了。
+     */
+    if (sk_under_memory_pressure(sk))
+        return false;
+
+    /* If we are under soft global TCP memory pressure, do not expand. */
+    /* 如果目前TCP层使用的内存超过tcp_mem[0]，就不扩大发送缓存的上限了 */
+    if (sk_memory_allocated(sk) >= sk_prot_mem_limits(sk, 0))
+        return false;
+
+    /* If we filled the congestion window, do not expand.
+     * 如果把拥塞控制窗口给用满了，说明拥塞窗口才是限制因素，就不扩大发送缓存的上限了。
+     */
+    if (tp->packets_out >= tp->snd_cwnd)
+        return false;
+
+    return true;
+}
+\stoptyping
+
+
+
+
+\section{管理}
+
+看完初始化，我们来看协议栈具体如何管理内存的，先来看发送端，
+发送端的主要实现是在tcp_sendmsg里面，这个函数我们前面已经详细的分析过了，
+我们这次只分析里面几个与内存相关的东西。
+\starttyping
+int tcp_sendmsg(struct kiocb *iocb, struct socket *sock, struct msghdr *msg,
+        size_t size)
+{
+..................................
+
+    if (copy <= 0) {
+new_segment:
+    if (!sk_stream_memory_free(sk))
+            goto wait_for_sndbuf;
+
+    skb = sk_stream_alloc_skb(sk, select_size(sk),
+    sk->sk_allocation);
+if (sk->sk_route_caps & NETIF_F_ALL_CSUM)
+        skb->ip_summed = CHECKSUM_PARTIAL;
+
+        skb_entail(sk, skb);
+        copy = size_goal;
+        max = size_goal;
+..................
+}
+\stoptyping
+
+
+
+可以看到这里第一个sk_stream_memory_free用来判断是否还有空间来供我们分配，
+如果没有则跳到wait_for_sndbuf来等待buf的释放。
+
+然后如果有空间供我们分配，则调用sk_stream_alloc_skb来分配一个skb，然后这个大小的选择是通过select_size。
+
+最后调用skb_entail来更新相关的域。
+
+现在我们就来详细看上面的四个函数,先来看第一个：
+\starttyping
+static inline int sk_stream_memory_free(struct sock *sk)
+{
+    return sk->sk_wmem_queued < sk->sk_sndbuf;
+}
+\stoptyping
+
+sk_stream_memory_free实现很简单，就是判断当前已经分配的写缓冲区的大小(sk_wmem_queued)
+是否小于当前写缓冲区(sk_sndbuf)的最大限制。
+
+
+然后是skb_entail，这个函数主要是当我们分配完buf后，进行一些相关域的更新，以及添加skb到writequeue。
+\starttyping
+static inline void skb_entail(struct sock *sk, struct sk_buff *skb)
+{
+    struct tcp_sock *tp = tcp_sk(sk);
+    struct tcp_skb_cb *tcb = TCP_SKB_CB(skb);
+............................
+    skb_header_release(skb);
+    tcp_add_write_queue_tail(sk, skb);
+///增加sk_wmem_queued.
+    sk->sk_wmem_queued += skb->truesize;
+///这里调整sk_forward_alloc的大小，也就是预分配buf的大小(减小).
+    sk_mem_charge(sk, skb->truesize);
+    if (tp->nonagle & TCP_NAGLE_PUSH)
+        tp->nonagle &= ~TCP_NAGLE_PUSH;
+}
+///这个函数很简单，就是将sk_forward_alloc - size.
+static inline void sk_mem_charge(struct sock *sk, int size)
+{
+    if (!sk_has_account(sk))
+        return;
+    sk->sk_forward_alloc -= size;
+}
+\stoptyping
+
+.......................
+
+
+
+
+
+
+
+
+
+
+
+\section{参考}
+\goto{http://simohayha.iteye.com/blog/532450}
+\goto{http://blog.csdn.net/zhangskd/article/details/47862581}

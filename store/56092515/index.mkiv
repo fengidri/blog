@@ -1,0 +1,29 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Title: ifconfig dropped packet
+%Class: kernel
+%Post:1
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+%
+ifconfig 发现 dropped 定时性地, 大概 1s 一次地增加.
+
+
+在\goto{这里}{https://www.novell.com/support/kb/doc.php?id=7007165}找到一些说明:
+
+\starttyping
+Beginning with kernel 2.6.37, it has been changed the meaning of dropped packet count. Before, dropped packets was most likely due to an error. Now, the rx_dropped counter shows statistics for dropped frames because of:
+
+Softnet backlog full  -- (Measured from /proc/net/softnet_stat)
+Bad / Unintended VLAN tags
+Unknown / Unregistered protocols
+IPv6 frames when the server is not configured for IPv6
+
+If any frames meet those conditions, they are dropped before the protocol stack and the rx_dropped counter is incremented.
+\stoptyping
+打开 tcpdump 之后,  drop 包不再增加. 说明就是以上的这些原因.
+
+机器使用了 bond0, 我把 bond0 下的网卡设置了 promisc 或 把 bond 设置混杂都没有效果.
+但是 tcpdump 就可以. 文献上说 ifconfig 设置 prmisc 这种方法对于 bond 没有效果.
+\starttyping
+# ifconfig <interface> promisc
+\stoptyping

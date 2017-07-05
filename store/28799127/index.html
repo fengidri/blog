@@ -1,0 +1,126 @@
+<p>
+</p>
+
+<h3>负载均衡</h3>
+<p>负载均衡是 upstream 中的一个子功能. 用于实现对于后端服务器的选择.
+<img src=http://i13.tietuku.com/d813e6edf86c4366.png ></p>
+
+<p>函数 ngx_event_connect_peer 中调用 get 函数得到一个 upstream 的地址.
+这里的 get 是由 load balance 模块提供的回调函数.
+<pre>
+    int                rc;
+    ngx_int_t          event;
+    ngx_err_t          err;
+    ngx_uint_t         level;
+    ngx_socket_t       s;
+    ngx_event_t       *rev, *wev;
+    ngx_connection_t  *c;
+
+    rc = pc-&gt;get(pc, pc-&gt;data);
+    if (rc != NGX_OK) {
+        return rc;
+    }
+
+    s = ngx_socket(pc-&gt;sockaddr-&gt;sa_family, SOCK_STREAM, 0);
+
+    ngx_log_debug1(NGX_LOG_DEBUG_EVENT, pc-&gt;log, 0, "socket %d", s);
+
+    if (s == (ngx_socket_t) -1) {
+        ngx_log_error(NGX_LOG_ALERT, pc-&gt;log, ngx_socket_errno,
+                      ngx_socket_n " failed");
+        return NGX_ERROR;
+    }
+
+
+    c = ngx_get_connection(s, pc-&gt;log);
+</pre>
+</p>
+
+<p>ngx_event_connect_peer 由 ngx_http_upstream_connect 函数调用.</p>
+
+<p>上述是 load balance 模块与 nginx 主程序进行交互的最重要的过程.
+而对于后端服务器的选择实现是 load balace 模块自己的任务.</p>
+
+<p>get 函数的返回值有以下几种情况:
+
+    <ul>
+
+        <li>NGX_DONE:	得到了连接地址信息，并且连接已经建立。nginx	直接使用连接，发送数据。
+
+        <li>NGX_OK:	得到了连接地址信息，但连接并未建立。nginx		建立连接，如连接不能立即建立，设置事件， 暂停执行本请求，执行别的请求。
+
+        <li>NGX_BUSY:	所有连接均不可用。	nginx	返回502错误至客户端。
+    </ul></p>
+
+<h3>初始化</h3>
+<p>负载平衡的使用是通过在 upstream 命令中加入 负载平衡的命令实现的, 所以初始化的过程是通过
+命令的回调的方式实现的.</p>
+
+<p>这个函数用于设置: uscf->peer.init_upstream, 同时设置 uscf->flags.</p>
+
+<p><pre>
+    ngx_http_upstream_srv_conf_t  *uscf;
+
+    uscf = ngx_http_conf_get_module_srv_conf(cf, ngx_http_upstream_module);
+
+    uscf-&gt;peer.init_upstream = ngx_http_upstream_init_ip_hash;
+
+    uscf-&gt;flags = NGX_HTTP_UPSTREAM_CREATE
+                |NGX_HTTP_UPSTREAM_MAX_FAILS
+                |NGX_HTTP_UPSTREAM_FAIL_TIMEOUT
+                |NGX_HTTP_UPSTREAM_DOWN;
+
+    return NGX_CONF_OK;
+</pre>
+</p>
+
+<p>flags 有如下可选项:
+
+    <ul>
+
+        <li>NGX_HTTP_UPSTREAM_CREATE：创建标志，如果含有创建标志的话，nginx会检查重复创建，以及必要参数是否填写；
+
+        <li>NGX_HTTP_UPSTREAM_MAX_FAILS：可以在server中使用max_fails属性；
+
+        <li>NGX_HTTP_UPSTREAM_FAIL_TIMEOUT：可以在server中使用fail_timeout属性；
+
+        <li>NGX_HTTP_UPSTREAM_DOWN：可以在server中使用down属性；
+
+        <li>NGX_HTTP_UPSTREAM_WEIGHT：可以在server中使用weight属性；
+
+        <li>NGX_HTTP_UPSTREAM_BACKUP：可以在server中使用backup属性。
+    </ul></p>
+
+<h4>init_upstream</h4>
+<p>在 init_upstream 函数执行时会对负载平衡进行初始化.
+这个过程对最重要的是完成对于
+uscf->peer.init 的初始化. 因为这个函数会在每一个请求中调用, 对于每一个请求是独立.
+一般可能会把 Round Robin 做为自己的后继处理模块, 所以有必要在这里同样进行初始化.
+如下:
+<pre>
+ngx_http_upstream_init_round_robin(cf, us);
+us-&gt;peer.init = ngx_http_upstream_init_ip_hash_peer;
+</pre>
+</p>
+
+<h4>init</h4>
+<p>这个函数会在每一个要使用 upstream 的请求中独立调用. 而这个函数的是最关键的任务是完成对于
+后端服服务列表.
+而这个表的作用是就是在有必要的情况下方便重试.
+而这个任务的完成一般是直接调用 ngx_http_upstream_init_round_robin_peer 来实现的.</p>
+
+<p>另一个重要的任务是完成 r->upstream->peer.get 的初始化, 这个函数一般是负载平衡核心算法的实现.
+前面讲过由 ngx_event_connect_peer 调用.</p>
+
+<p>这就就负载平衡模块的一基本结构.</p>
+
+<h3>fails</h3>
+<p>对于 upstream 的状态判断 ngx 是依赖于 max_fails 与 fail_timeout 来处理的.
+对应的还有两个变量 fails 与 checked, 另一个底层的变量 accessed 这个变量不能被名字误解.</p>
+
+<p>fails 只会连续增加, 有一次访问成功就会清0.
+如果连接失败次数达到 max_fails, 那么就会在下面的 fail_timeout 里不对它进行使用. 直到
+超出 fail_timeout.</p>
+
+<p>如果没有及时更新 checked. fails 就不会清空. 结果就是说, 在超时之后, 被识别为
+live 只是依赖于时间上大于 fail_timeout. 影响是一次失败就会必然导致这个 server 被识别为当掉了.</p>

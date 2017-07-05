@@ -1,0 +1,361 @@
+<html>
+<head>
+<script src='js/jquery.js'></script>
+<script src='js/index.js'></script>
+<script src='js/resume.js'></script>
+<link rel="Stylesheet" type="text/css" href='css/resume.css'></link>
+
+</head>
+<body>
+<img src='images/index_switch.gif'   id=index_switch />
+<img src='images/print.png'   id=print />
+<div id='index'></div>
+<div id=wrap>
+
+<div class=head>
+</div>
+
+<div class="mr_baseinfo">
+    <!--  我是小雪男朋友.  -->
+    <span class="mr_name"> 丁雪峰简历 </span>
+    <br/> <br/>
+    <span class="mr_intro"> 关注方向: 系统底层与分布式 </span><br/><br/>
+    <span class="mobile"><span></span>17712215562 </span>	
+    <span class="email"><span></span>fengidri@yeah.net </span>
+    <br /><br />
+
+    <a href="http://github.com/fengidri" class=links target="_blank" >
+        <img src='images/github-40.png' /><em>GitHub</em>
+    </a>
+    <a href="http://blog.fengidri.me" class=links target="_blank" >
+        <img src='images/blog-40.png' /><em>Blog</em>
+    </a>
+    <br/> <br/> <br/>
+    <br/>
+</div>
+
+<h3>自我描述</h3>
+<div id="sub_wrap">
+    <!--div id=pic>
+        <img src=images/dxf.jpg>
+    </div-->
+    <div id=left>
+        <p> <b> Linux:</b> 使用 Archlinux 做为自己唯一的日常与工作操作系统有5年
+        多的时间了.
+        是一个疯狂的 Linux 爱好者.
+        对于linux的底层到高层都非常了解.
+        有丰富的 Linux 开发经验.</p>
+
+        <p> <b>关注方向:</b> 系统底层 分布式</p>
+        <p> <b>追求极限:</b> 每一段代码都严格要求, 追求完美.
+            曾为了提高程序的性能与可维护性将公司一个8000行的模块进行重构成1000行.
+            对于代码进行高度抽象并降底耦合.
+            目前一直运行非常良好, 并且可以方便扩展.
+        </p>
+        <p> <b>热情：</b>
+            对编程工作有足够的热情，曾经将业余的兴趣变成了自己的工作，妙不可言，如今再度出发。
+        </p>
+        <p>
+        由于工作能力出众， 虽然工作时间短， 但是直接参与公司核心系统的设计与开发
+        。</p>
+        <!--p> <b>认真钻研</b>: 接手解决系统长期存在的日志爆盘问题后尝试各种思路.
+            钻研了多种日志的处理方案与技术.
+            并研究了磁盘写入的系统底层的处理过程与接口.
+            最后使用loop设备的特性完美解决问题.
+        </p-->
+    </div>
+
+
+</div>
+
+<!-- 小雪是住在心里不给房租的流氓. -->
+<h3> 工作经历 </h3>
+<div id="sub_wrap">
+            <div class="mr_moudle_content">
+                <h4>佳米科技(广东佳和通信)</h4>
+                <span >语音服务器开发工程师 2013.07 — 2014.12</span>
+                <ol>
+                    <li> 日常负责 Linux VOIP 系统核心服务开发与维护</li>
+                    <li> 软件开发管理相关的辅助工具地开发 </li>
+                    <li> 参与公司业务系统设计与构架 </li>
+                    <li> 分布式系统布署议案与管理方法 </li>
+                </ol>
+            </div>
+</div>
+
+<h3>教育经历</h3>
+<div id="sub_wrap">
+    <h4>武汉理工大学</h4>
+    <span>本科 · 高分子材料科学与技术</span> <span>2013年毕业</span> <br />
+    <span> 大学阶段有意识地学习了大量 linux 编程相关的知识. </span>
+</div>
+
+<h3>项目经验</h3>
+<div id="sub_wrap">
+    <div class=sub_project>
+        <h4>linux平台编译打包发布安装系统</h4>
+        <div class="mr_content_r">
+            <span>全面负责</span>
+            <span>2014.06 - 2014.07</span>
+        </div>							
+        <div class="mr_content_m">
+            <ol>
+                <li>主要使用python， 并结合makefile 与 shell.</li>
+                <li>实现分成三个部分：编译与打包， 仓库管理， 下载与安装。</li>
+                <li>编译与打包： 搭建linux 平台下20多个模块的编译环境，
+                    并提供统一的编译与打包接口，
+                    各模块只要提供一些简单的信息就可以完成编译与打包。</li>
+
+                <li>仓库管理：
+                    基于linux + nginx + python 实现一个仓库管理服务程序。
+                    处理发布与下载以及版本管理工作。</li>
+                <li>下载与安装： 基于 python 实现一个 TUI 工具。
+                    用户可以使用这个工具完成模块的安装与升级工作。</li>
+            </ol>
+        </div>	
+        <p id=hardpoint>
+        难点在于统一所有模块的编译方法, 并提供接口. 以及版本的控制.
+        同时为了要对于 Linux 非常了解才能解决软件的安装中的问题.
+        </p>
+    </div>
+    <hr class='sub' />
+    <div class=sub_project>
+        <h4>分布式VOIP 云系统架构B2bua</h4>
+        <div class="mr_content_r">
+            <span> 参与开发</span>
+            <span>2014.03 - 2014.05</span>
+        </div>							
+        <div class="mr_content_m">
+            <ol>
+                <li>大型分布式 C 项目。</li>
+                <li>负责SIP信念的控制。
+                    完成语音通话中的业务的服务如转移、保留等。</li>
+                <li>由于分布式结构，
+                    要对于流程数据结构进行修改来适应多个服务器同时运行而引发的问题。
+                    比如在多个服务器之间发生呼叫转移这样的业务请求。</li>
+            </ol>
+            <p id=hardpoint>
+            工作的难点在于B2bua 的分布式设计与构架.
+            </p>
+        </div>							
+    </div>
+    <hr class='sub' />
+    <div class=sub_project>
+        <h4>Redis 接口封装</h4>
+        <div class="mr_content_r">
+            <span> 全面负责开发</span>
+            <span>2014.06 - 2014.07</span>
+        </div>							
+        <div class="mr_content_m">
+            <ol>
+                <li>                面临的问题是之前的开发者留下的。模块内部的底耦合性， redis的协议错误，功能封装不足， 扩展性太差。</li>
+                <li>之前的做法是每一个redis命令使用一个单独的函数实现。所以代码重复且有8000行， 可维护性太差。一些redis的重要功能没有实现， 给上层的开发带来很大的难度。</li>
+                <li>我对所有的命令进行抽象分离，使得封装的核心函数可以用于所有的命令。每一个命令只要提供基本信息就可以了， 扩展也非常方便。</li>
+
+            </ol>
+        </div>							
+    </div>
+    <hr class='sub' />
+
+    <div class=sub_project>
+        <h4> 媒体代理开发</h4>
+        <div class="mr_content_r">
+            <span> 参与开发</span>
+            <span>2014.05 - 2014.06</span>
+        </div>							
+        <div class="mr_content_m">
+            <ol>
+                <li> 媒体代理逻辑开发 </li>
+                <li> libnetfilter_conntrack 接口的调用开发</li>
+            </ol>
+        </div>							
+    </div>
+    <hr class='sub' />
+
+    <div class=sub_project>
+
+        <h4>日志爆盘</h4>
+        <div class="mr_content_r">
+            <span>全面负责</span>
+            <span>2013.11 - 2013.11</span>
+        </div>							
+        <div class="mr_content_m">
+            <p>目标： 解决系统日志爆盘后系统不能正常运行的问题</p>
+            <ol>
+                <li>结合我自己的linux知识， 一开始就选择了loop设备来解决问题。</li>
+                <li>问题在于发现当loop设备满了之后， 虽然如果继续写日志不影响进程运行。但是每一次写入会花费很长时间。最终我定位到了驱动上的问题。</li>
+            </ol>
+        </div>							
+    </div>
+
+    <hr class='sub' />
+
+    <div class=sub_project>
+        <h4>TelnetServer</h4>
+        <div class="mr_content_r">
+            <span>全面负责</span>
+            <span>2013.11 - 2013.12</span>
+        </div>							
+        <div class="mr_content_m">
+            <ol>
+                <li>完成系统中所有模块的对外Telnet服务的代理</li>
+                <li>提供丰富的，用户友好的用户界面</li>
+            </ol>
+        </div>							
+    </div>
+</div>
+
+<h3> 个人作品 </h3>
+<div id='sub_wrap'>
+    <div class=sub_works>
+        <h4>Cottle</h4>
+        <div class=desc>
+            restful思想的python web框架.
+            <div class=more>
+                <a href=http://blog.fengidri.me/?id=2211394 target=_blank>详细说明</a>
+                <a href=http://github.com/fengidri/cottle target=_blank>GitHub</a>
+            </div>
+        </div>
+    </div>
+
+    <hr ></hr>
+
+    <div class=sub_works>
+        <h4>Pyplugin</h4>
+        <div class=desc>
+            基于python的vim插件框架及插件.
+            <div class=more>
+                <a href=http://blog.fengidri.me/?id=1761857 target=_blank>详细说明</a>
+                <a href=http://github.com/fengidri/pyplugin target=_blank>GitHub</a>
+            </div>
+        </div>
+    </div>
+
+    <hr ></hr>
+
+    <div class=sub_works>
+        <h4>Process_Mod</h4>
+        <div class=desc>
+            linux 系统监控软件.
+            <div class=more>
+                <a class=more href=http://github.com/fengidri/process_mod target=_blank>GitHub</a>
+            </div>
+        </div>
+    </div>
+    <!-- 这还有一个作品:
+        蓦然思君切
+        君亦思伊人
+        相思不可得
+        将情寄文码
+    -->
+</div>
+
+
+
+<!-- 小雪看到了吗? -->
+<h3> 关注项目 </h3>
+<div id=sub_wrap>
+    熟悉nginx, redis 源代码.
+    <ul>
+        <li><a href=http://nginx.org >nginx</a></li>
+        <li><a href=http://redis.io >redis</a></li>
+        <li><a href=http://www.lua.org >lua</a></li>
+    </ul>
+</div>
+<!-- 楼上的, 我看到了. 你个呆子. -->
+<!--
+
+    雪峰:
+        你好哇, 见到你真高兴.
+        原来你也在这里.
+        你是我这一生半世未折的礼物.
+        丁先生, 余生请你指教.
+                       - 小雪
+                    2015.1.17
+-->
+<!--
+   我愿以我的生命与你交换.
+                       - 雪峰
+-->
+
+<!--h3>技能评价</h3>
+<div id="sub_wrap">
+    <div class="mr_moudle_content">
+        <div class="mr_skill_con">
+            <span class="mr_skill_name" title="c/c++">C/C++</span>
+            <span class="mr_skill_plan" data-skillLevel = "90">
+                <em></em>
+            </span>
+        </div>	
+        <div class="mr_skill_con">
+            <span class="mr_skill_name" title="python">python</span>
+            <span class="mr_skill_plan" data-skillLevel = "90">
+                <em></em>
+            </span>
+        </div>	
+        <div class="mr_skill_con">
+            <span class="mr_skill_name" >Vim</span>
+            <span class="mr_skill_plan" data-skillLevel = "90">
+                <em></em>
+            </span>
+        </div>	
+        <div class="mr_skill_con">
+            <span class="mr_skill_name" title="linux">linux</span>
+            <span class="mr_skill_plan" data-skillLevel = "90">
+                <em></em>
+            </span>
+        </div>	
+        <div class="mr_skill_con">
+            <span class="mr_skill_name" title="linux">Shell</span>
+            <span class="mr_skill_plan" data-skillLevel = "85">
+                <em></em>
+            </span>
+        </div>	
+        <div class="mr_skill_con">
+            <span class="mr_skill_name" title="web">web</span>
+            <span class="mr_skill_plan" data-skillLevel = "82">
+                <em></em>
+            </span>
+        </div>	
+        <div class="mr_skill_con">
+            <span class="mr_skill_name" title="redis/mysql">redis</span>
+            <span class="mr_skill_plan" data-skillLevel = "75">
+                <em></em>
+            </span>
+        </div>	
+        <div class="mr_skill_con">
+            <span class="mr_skill_name" >nginx</span>
+            <span class="mr_skill_plan" data-skillLevel = "75">
+                <em></em>
+            </span>
+        </div>	
+        <div class="mr_skill_con">
+            <span class="mr_skill_name" >php</span>
+            <span class="mr_skill_plan" data-skillLevel = "60">
+                <em></em>
+            </span>
+        </div>	
+        <div class="mr_skill_con">
+            <span class="mr_skill_name" >makefile</span>
+            <span class="mr_skill_plan" data-skillLevel = "80">
+                <em></em>
+            </span>
+        </div>	
+        <div class="mr_skill_con">
+            <span class="mr_skill_name" >Tex</span>
+            <span class="mr_skill_plan" data-skillLevel = "80">
+                <em></em>
+            </span>
+        </div>	
+
+        <div class="mr_skill_con">
+            <span class="mr_skill_name" title="redis/mysql">mysql</span>
+            <span class="mr_skill_plan" data-skillLevel = "63">
+                <em></em>
+            </span>
+        </div>	
+    </div>						
+</div -->
+<br /><br /><br /><br /><br /><br /><br />
+<body>
+</html>

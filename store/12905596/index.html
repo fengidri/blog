@@ -1,0 +1,48 @@
+<p></p>
+
+<h3>介绍</h3>
+<p>功能: 用于列出二进制程序所用到的库文件.</p>
+
+<p>原理: 设置环境变量LD_TRACE_LOADED_OBJECTS 为1, 实际的行为是连接器做出的.</p>
+
+<h3>输出</h3>
+<p><pre>
+$ ldd cs
+	linux-gate.so.1 =&gt;  (0xffffe000)
+	libz.so.1 =&gt; /lib/libz.so.1 (0xb7f8c000)
+	libpthread.so.0 =&gt; /lib/libpthread.so.0 (0xb7f75000)
+	libcrypto.so.0.9.8 =&gt; /usr/lib/libcrypto.so.0.9.8 (0xb7e4d000)
+	libpcre.so.0 =&gt; /usr/lib/libpcre.so.0 (0xb7e21000)
+	libstdc++.so.6 =&gt; /usr/local/gcc4.5.1/lib/libstdc++.so.6 (0xb7d40000)
+	libm.so.6 =&gt; /lib/libm.so.6 (0xb7d18000)
+	libgcc_s.so.1 =&gt; /usr/local/gcc4.5.1/lib/libgcc_s.so.1 (0xb7cfd000)
+	libc.so.6 =&gt; /lib/libc.so.6 (0xb7bbc000)
+	/lib/ld-linux.so.2 (0xb7fab000)
+	libdl.so.2 =&gt; /lib/libdl.so.2 (0xb7bb7000)
+</pre>
+
+第一列是库的名字, 第二列是实际的库的路径. 最后的括号里是
+程序加载后, 库的开始的地址.</p>
+
+<h3>VDSO</h3>
+<p>VDSO(Virtual Dynamically-linked Shared Object)是个很有意思的东西,
+它将内核态的调用映射到用户态的地址空间中, 使得调用开销更小, 路径更好.</p>
+
+<p>开销更小比较容易理解, 那么路径更好指的是什么呢?
+拿x86下的系统调用举例, 传统的int 0x80有点慢,
+Intel和AMD分别实现了sysenter, sysexit和syscall, sysret,
+即所谓的快速系统调用指令, 使用它们更快, 但是也带来了兼容性的问题.
+于是Linux实现了vsyscall, 程序统一调用vsyscall, 具体的选择由内核来决定.
+而vsyscall的实现就在VDSO中.</p>
+
+<p>名字叫linux-vdso.so.1(老点的版本是linux-gate.so.1)的动态文件.
+linux-gate.so.1的地址是0xffffe000. 较新的内核提供了进程随机地址化功能, linux-vdso.so.1的地址每次cat /proc/self/maps都会变化.</p>
+
+<p>不光是快速系统调用, glibc现在也提供了VDSO的支持, open(), read(), write(), gettimeofday()都可以直接用VDSO中的实现, 使得这些调用更快, glibc更兼容, 内核新特性在不影响glibc的情况下也可以更快的部署. 实在是Nice!</p>
+
+<h3>参考</h3>
+<p>
+    <ul>
+
+        <li>&nbsp;<a href=http://adam8157.info/blog/2011/10/linux-vdso >Linux下的VDSO</a>&nbsp;
+    </ul></p>

@@ -1,0 +1,40 @@
+<p>我一直认为, c 语言不如其它语言的一个重要的原因是, 调度不方便.
+比如: python, 如果有什么问题, 它会把出错的地方打印出来, 这样, 我们就
+可以直接去解决问题了.</p>
+
+<p>而 c 呢? 就是么傲娇!!!</p>
+
+<p><pre>
+#./a.out
+zsh: segmentation fault (core dumped)  ./a.out
+</pre>
+</p>
+
+<p>我想着, 如果程序出错的时候, 可以打印出一些信息, 对于调试是非常有用的.
+所以我的想法就有一些, 比如对于信号进行捕捉, 再通过 backstrace 之类的函数实现,
+再比如使用 systemtap. 但是就是没有想过, 其实 gcc 就有这样的功能如:
+<pre>
+-fno-omit-frame-pointer -fsanitize=address
+</pre>
+</p>
+
+<p><pre>
+#./a.out
+ASAN:SIGSEGV
+=================================================================
+==31784==ERROR: AddressSanitizer: SEGV on unknown address 0x000000000000 (pc 0x7f61af2110ca bp 0x7ffdd657ed10 sp 0x7ffdd657ecd8 T0)
+    #0 0x7f61af2110c9 in strlen (/usr/lib/libc.so.6+0x810c9)
+    #1 0x7f61af1fa8cb in _IO_puts (/usr/lib/libc.so.6+0x6a8cb)
+    #2 0x4006e1 in fun (/home/vagrant/tmp/a.out+0x4006e1)
+    #3 0x4006f2 in main (/home/vagrant/tmp/a.out+0x4006f2)
+    #4 0x7f61af1b060f in __libc_start_main (/usr/lib/libc.so.6+0x2060f)
+    #5 0x4005f8 in _start (/home/vagrant/tmp/a.out+0x4005f8)
+
+AddressSanitizer can not provide additional info.
+SUMMARY: AddressSanitizer: SEGV ??:0 strlen
+==31784==ABORTING
+</pre>
+</p>
+
+<p>这样就方便多了. 但是这里没有输出一些更加详细的内容比如 上下文变量之类的. 但是 gcc 的还是可以再研究一下, 看看
+有没有更加方便的东西.</p>

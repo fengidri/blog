@@ -1,0 +1,93 @@
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<link rel="Stylesheet" type="text/css" href='/fwiki/fwiki.css' />
+<link rel="Stylesheet" type="text/css" href='/fwiki/show.css' />
+<link rel="Stylesheet" type="text/css" href='prettify/prettify.css' />
+
+
+<script src='js/jquery.js'></script>
+<script src='prettify/prettify.js'></script>
+<script src='layer/layer.min.js'></script>
+<script src='js/index.js'></script>
+<script src='/fwiki/layout.js'></script>
+<script src='/fwiki/options.js'></script>
+
+
+
+<script>
+$(document).ready(function(){
+    window.onresize = close_attach_auto;
+    DIV_LISTPOST    = $('div#listpost');
+    DIV_HEADER      = $('div#header');
+    DIV_CLASS       = $('div#class_div');
+    DIV_CHAPTER     = $('div#chapter');
+    DIV_INDEX       = $('div#index');
+    DIV_DUOSHUO     = $('div.ds-thread');
+
+
+
+    DIV_LISTPOST.on('click', 'div', EShowChapter);
+    DIV_CLASS.on('click', 'div', ClassShowListPost);
+    $('div#class_container h3').click(function(){
+        $('div#class_div' ).toggle();
+    });
+
+
+    var path = window.location.pathname;
+    if (path[path.length - 1] != '/')
+    {
+        var t = path.split('/');
+        t = t.slice(0, t.length - 1);
+        path = t.join('/') + '/';
+    }
+
+    URL_PREFIX = path + URL_PREFIX;
+    URL_INDEX  = path + URL_INDEX;
+    URL_CLASS  = path + URL_CLASS;
+    LOCALHOST = 1;
+
+    DataInit();
+    ShowTasks();
+})
+</script>
+
+
+
+<title>blog of fengidri</title>
+</head>
+<body>
+    <h1 id=title><a href=http://blog.fengidri.me >fengidri's blog</a></h1>
+<div id='header'></div>
+
+
+<div id='listpost'></div>
+
+
+
+
+<div >
+    <br /><br /><br /><br /><br /><br /><br /><br />
+    <br /><br /><br /><br /><br /><br />
+</div>
+    <hr />
+<div id=buttom>
+    <a href=http://github.com/fengidri >Github</a>
+    <a href=http://cls.fengidri.me/classmate >classmate</a>
+    <a href=http://blog.fengidri.me >Blog</a>
+    <br />
+    fengidri@yeah.net 手工打造.
+    <br />
+    粤ICP备15026997号
+    <br />
+    <script type="text/javascript">
+        var cnzz_protocol = (("https:" == document.location.protocol) ? " https://" : " http://");
+        document.write(unescape("%3Cspan id='cnzz_stat_icon_1253644473'%3E%3C/span%3E%3Cscript src='"
+                    + cnzz_protocol
+                    + "s95.cnzz.com/z_stat.php%3Fid%3D1253644473%26show%3Dpic1' type='text/javascript'%3E%3C/script%3E"));
+    </script>
+</div>
+
+</body>
+
+</html>

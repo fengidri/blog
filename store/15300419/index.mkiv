@@ -1,0 +1,128 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Title: 显示器的分辨率
+%Class:
+%Post:1
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{前言}
+分辨率是由谁决定的, 这个问题我一直没有搞太明白, 可能是显卡也可能是
+显示器.
+
+最近了解了一下, 分辨率还是由显示器决定的. 显示器有自身的分辨率,
+这个值与其物理大小有关系.
+
+之前不能理解的是, 显卡又是如何知道显示器的分辨率的呢? 这个过程
+不明白, 所以就会让人迷糊.
+
+实际上是由显示器告诉主机的, 主机知道了显示器的一些信息, 然后提供对应的
+分辨率的画面. 这个信息叫做EDID 信息.
+
+\section{EDID}
+延伸显示能力识别（Extended display identification data，简称EDID）是指屏幕分辨率的资料，包括厂商名称与序号。
+一般EDID存在于显示器的PROM或EEPROM内。一般如要读取EDID都是透过I2C，slave address是0x50[1]。
+
+这些信息不是只有分辨率而已, 还有很多其它信息.
+
+linux 可以用xrandr --verbose 查看:
+\starttyping
+VGA1 connected 1920x1080+0+0 (0x4a) normal (normal left inverted right x axis y axis) 510mm x 287mm
+        Identifier: 0x47
+        Timestamp:  12619
+        Subpixel:   unknown
+        Gamma:      1.0:1.0:1.0
+        Brightness: 1.0
+        Clones:     HDMI1 HDMI2
+        CRTC:       0
+        CRTCs:      0 1 2
+        Transform:  1.000000 0.000000 0.000000
+                    0.000000 1.000000 0.000000
+                    0.000000 0.000000 1.000000
+                   filter:
+        EDID:
+                00ffffffffffff0010ac714042334a43
+                061801030e331d78ea6ea5a3544f9f26
+                115054a54b00714f8180d1c001010101
+                010101010101023a801871382d40582c
+                4500fe1f1100001e000000ff00584659
+                4e36343238434a33420a000000fc0044
+                454c4c205532333132484d0a000000fd
+                00384c1e5311000a20202020202000ad
+  1920x1080 (0x4a) 148.500MHz +HSync +VSync *current +preferred
+        h: width  1920 start 2008 end 2052 total 2200 skew    0 clock  67.50KHz
+        v: height 1080 start 1084 end 1089 total 1125           clock  60.00Hz
+  1280x1024 (0xbf) 135.000MHz +HSync +VSync
+        h: width  1280 start 1296 end 1440 total 1688 skew    0 clock  79.98KHz
+        v: height 1024 start 1025 end 1028 total 1066           clock  75.02Hz
+  1280x1024 (0xc0) 108.000MHz +HSync +VSync
+        h: width  1280 start 1328 end 1440 total 1688 skew    0 clock  63.98KHz
+        v: height 1024 start 1025 end 1028 total 1066           clock  60.02Hz
+  1152x864 (0xc1) 108.000MHz +HSync +VSync
+        h: width  1152 start 1216 end 1344 total 1600 skew    0 clock  67.50KHz
+        v: height  864 start  865 end  868 total  900           clock  75.00Hz
+  1024x768 (0xc2) 78.800MHz +HSync +VSync
+        h: width  1024 start 1040 end 1136 total 1312 skew    0 clock  60.06KHz
+        v: height  768 start  769 end  772 total  800           clock  75.08Hz
+  1024x768 (0xc3) 65.000MHz -HSync -VSync
+        h: width  1024 start 1048 end 1184 total 1344 skew    0 clock  48.36KHz
+        v: height  768 start  771 end  777 total  806           clock  60.00Hz
+  800x600 (0xc4) 49.500MHz +HSync +VSync
+        h: width   800 start  816 end  896 total 1056 skew    0 clock  46.88KHz
+        v: height  600 start  601 end  604 total  625           clock  75.00Hz
+  800x600 (0xc5) 40.000MHz +HSync +VSync
+        h: width   800 start  840 end  968 total 1056 skew    0 clock  37.88KHz
+        v: height  600 start  601 end  605 total  628           clock  60.32Hz
+  640x480 (0xc6) 31.500MHz -HSync -VSync
+        h: width   640 start  656 end  720 total  840 skew    0 clock  37.50KHz
+        v: height  480 start  481 end  484 total  500           clock  75.00Hz
+  640x480 (0xc7) 25.200MHz -HSync -VSync
+        h: width   640 start  656 end  752 total  800 skew    0 clock  31.50KHz
+        v: height  480 start  490 end  492 total  525           clock  60.00Hz
+  720x400 (0xc8) 28.320MHz -HSync +VSync
+        h: width   720 start  738 end  846 total  900 skew    0 clock  31.47KHz
+        v: height  400 start  412 end  414 total  449           clock  70.08Hz
+VIRTUAL1 disconnected (normal left inverted right x axis y axis)
+        Identifier: 0x48
+        Timestamp:  12619
+        Subpixel:   no subpixels
+        Clones:
+        CRTCs:      3
+        Transform:  1.000000 0.000000 0.000000
+\stoptyping
+这些信息的与分辨率好像是没有什么关系的, 并不只是大小的问题, 要显示器可以正常工作
+其实还有一些别的信息.
+
+要调整分辨率的话, 可以通过输入这些频率的相关参数. 但是另一种方式可能更好一些
+就是Modeline. 这种参数如下:
+\starttyping
+# 1920x1080 59.96 Hz (CVT 2.07M9) hsync: 67.16 kHz; pclk: 173.00 MHz
+Modeline "1920x1080_60.00"  173.00  1920 2048 2248 2576  1080 1083 1088 1120 -hsync +vsync
+\stoptyping
+
+从上面的xrander --verbson 可以看到显示器支持的分辨率. 那么可以用如下的
+命令得到对应的分辨率下的Modeline:
+\starttyping
+>>> cvt 1920 1080
+# 1920x1080 59.96 Hz (CVT 2.07M9) hsync: 67.16 kHz; pclk: 173.00 MHz
+Modeline "1920x1080_60.00"  173.00  1920 2048 2248 2576  1080 1083 1088 1120 -hsync +vsync
+\stoptyping
+
+\section{设置分辨率}
+在linux 下设置分辨率是很方便的, 可使用xrander 命令.
+
+在mac 下比较麻烦. 有一个工具switchresx 可以实现, 这个工具是收费的,
+而实现的原理我也不是太了解. 大体的做法就是先得到显示器的分辨率的相关
+信息, 我感觉还是modeline 比较好, 那些频率相关的信息
+比较麻烦, 可能还要自己进行计算, 相对的modeline 的信息比较固定.
+switchresx 可以导入modeline 信息. 先复制modeline信息,
+在设置分辨率信息的左下角有一个按钮, 点了之后可以把当前的信息copy 出来
+也可以从当前的复制信息中导入modeline 信息.
+\img{http://i1.tietuku.com/6291fd44c4d9d9f8.png}
+
+\section{其它}
+
+另一方面对于不同的接口显示器的EDID 信息可能是不同的, 比如显示也许可以有很高的分辨率,
+但是VGA 接口是不能支持的, 那么其对应的EDID 信息也就是比较底一些的分辨率了.
+
+
+
+\section{参考}
+\goto{EDID}{http://zh.wikipedia.org/wiki/EDID}

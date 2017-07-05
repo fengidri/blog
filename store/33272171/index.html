@@ -1,0 +1,17 @@
+<p>
+这应该是一个 bug, 当我们设置了 viewportSize 的时候, 产生的 document 的 width
+总是其两倍. 如果只是这样也没有什么影响, 但是当我想得到一个元素的 top, left, width, heigth
+把这个元素 rander 出来的时候, 就会发现总是不对. 很讨厌, 不知道是什么原因.</p>
+
+<p>这个项目在我看来还是前期, 还没有到稳定的阶段, 总是会出现一些问题.</p>
+
+<p>目前这个问题的一个解决方法是:
+<pre>
+page.evaluate(function () {
+        /* fix the body width that overflows out of the viewport */
+        document.body.style.width = "50%";
+        });
+</pre>
+</p>
+
+<p>目前测试来说, 是ok</p>

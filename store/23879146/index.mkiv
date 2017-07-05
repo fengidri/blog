@@ -1,0 +1,68 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Title: ATS - storage
+%Class: ats
+%Post:1
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\def\stconf{storage.config}
+
+\stconf 用于列出所有用于缓存的文件, 目录或磁盘.
+这个文件的修改要重启生效.
+
+\section{格式}
+\stconf 文件是由于如下的行构成的:
+\starttyping
+pathname size [ volume=number ] [ id=string ]
+\stoptyping
+
+\startitemize
+\item pathname 是分区, 目录, 文件的名字.
+\item size 指定 pathname 使用的大小
+\item volume 是在 volume.conf 或 hosting.config 中的 volume number.
+\item id 是由 Assignment Table 进行分配.
+\stopitemize
+
+对于目录, size 必须指定, 而文件与分区则是可选的. valume 与id 都是可选的.
+
+\bold{注意:}
+The volume option is independent of the seed option and either can be used with or without the other, and their ordering on the line is irrelevant.
+
+\bold{注意:}
+If the id option is used every use must have a unique value for string.
+
+你可以使用任意大小的分区, 但是为更好的性能:
+\startitemize
+\item 使用原始磁盘分区
+\item 对于任意的disk, 所有的分区大小相同
+\item For each node, use the same number of partitions on all disks.
+\item 把相似的storage 组织进不同的 volumes.
+For example split out SSD’s or RAM drives into their own volume.
+\stopitemize
+一个格式化或原始的磁盘的大小至少 128 MB.
+当使用原始 disk 或分区, 你应该保证 Traffic Server user 有对于
+原始disk 或分区的读写权限.
+一个好的做法是保证磁盘文件的权限为'g+rw', 并且 ATS 的运行用户在
+拥有磁盘文件的组里.
+然而，一些操作系统具有更强的要求, 下面会提到.
+
+可用的单位如下:
+\startitemize
+\item K Kilobytes (1024 bytes)
+\item M Megabytes (1024^2 or 1,048,576 bytes)
+\item G Gigabytes (1024^3 or 1,073,741,824 bytes)
+\item T Terabytes (1024^4 or 1,099,511,627,776 bytes)
+\stopitemize
+\section{Assignment Table}
+
+
+\section{Linux Example}
+
+
+
+
+\section{参考}
+\goto{\stconf}{https://docs.trafficserver.apache.org/en/latest/reference/configuration/storage.config.en.html}
+
+
+
+

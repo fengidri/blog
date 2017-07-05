@@ -1,0 +1,55 @@
+%Title: matplotlib 做图
+%Class:
+%Post:1
+感觉这个很好, 加上是用的python. 感觉可以之后就用这个做图了.
+
+
+\starttyping
+import matplotlib.pyplot as plt
+from matplotlib.ticker import MultipleLocator, FuncFormatter
+
+
+def x_format(x, pos):
+    return x / 1024/1024
+
+# 准备数据
+x = [pair[0] for pair in data]
+y = [pair[1] for pair in data]
+
+#plt.figure(figsize=(8,4))
+#plt.plot(x,y,label="$sin(x)$",color="red",linewidth=2)
+
+#做图
+plt.plot(x,y, 'g')
+
+#设置x, y 轴的label
+plt.xlabel('slice/M')
+plt.ylabel('time*10000/s')
+
+#设置title
+plt.title("Download 10000 times with changing the slice ")
+
+#设置x, y轴的数据范围
+plt.ylim(15, 30)
+plt.xlim(1000, 10*1024*1024)
+
+#网格
+plt.grid()
+
+plt.legend()
+
+#得到轴对象
+ax=plt.gca()
+
+#设置X轴的主精度
+ax.xaxis.set_major_locator(MultipleLocator(1024*1024))
+
+#设置X轴刻度显示
+ax.xaxis.set_major_formatter(FuncFormatter(x_format))
+
+plt.show()
+
+\stoptyping
+
+
+

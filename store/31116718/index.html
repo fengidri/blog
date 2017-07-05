@@ -1,0 +1,825 @@
+<p></p>
+
+<h3>前言</h3>
+<p>upstream 是 nginx 中特殊的一个子系统. 本质上这是一个框架, 一个用于反向代理的框架.
+http proxy 之类是在这个框架上实现的针对于 http 协议的反向代理.
+还有一些其它的协议的模块如 fastcgi 之类.</p>
+
+<p>而另一方面, upstream 这个框架本身还有一些子功能点 keepalive, load balancer.
+同时作为 load balancer 也是一个框架的, 所以可以有很多不同的 balancer 算法如 ip_hash,
+round_robin. 而 keepalive 又也是基于 balancer 实现的一个特殊的与 upstream 框架的关系比较紧的
+特殊的模块.</p>
+
+<p>另一方面在 upstream 还实现一个编译可选的功能: cache.</p>
+
+<p>可见 upstream 实在是一个比较复杂的模块. 这些功能分成两个部份, 一部份是对于 upstream server
+的管理也就是负载平衡的实现, 另一部分是对于一个反向代理的框架.</p>
+
+<p>这里对于框架进行说明.</p>
+
+<h3>使用</h3>
+<p>由于upstream 是一个框架, 就像一是个类, 各个功能模块继承这个框架, 形成自己的类, 而当
+用户进行调用的时候就是把这个功能类进行实例化.</p>
+
+<p>比如: proxy 继承这 upstream 框架, 形成了自己的类, 用户使用 proxy_pass 对这个类进行实际化.</p>
+
+<p>我们就通过 proxy_pass 对于这个 upstream 进行说明.</p>
+
+<h3>实例化</h3>
+<p>proxy_pass 命令的回调是 ngx_http_proxy_pass@ngx_http_proxy_modules.c .</p>
+
+<p>一个 location 中的 handler 是在 content phase 的处理方法. 而 proxy_pass 命令把自己的处理方法
+ngx_http_proxy_handler 挂载到当前的 location 上, 当一个请求处理到的 content 阶段的时候就是调用这个方法.</p>
+
+<p>后面的代码就是对于参数的处理了.</p>
+
+<p>我们来看看 ngx_http_proxy_handler 这个函数.</p>
+
+<p><pre>
+static ngx_int_t
+ngx_http_proxy_handler(ngx_http_request_t *r)
+{
+    ngx_int_t                    rc;
+    ngx_http_upstream_t         *u;
+    ngx_http_proxy_ctx_t        *ctx;
+    ngx_http_proxy_loc_conf_t   *plcf;
+#if (NGX_HTTP_CACHE)
+    ngx_http_proxy_main_conf_t  *pmcf;
+#endif
+
+    // 首先创建一个 upstream . 这是很重要, 也是我们 upstream 开始发挥作用的开始
+    if (ngx_http_upstream_create(r) != NGX_OK) {
+        return NGX_HTTP_INTERNAL_SERVER_ERROR;
+    }
+
+    // 设置 ctx, 没什么可说的了
+    ctx = ngx_pcalloc(r-&gt;pool, sizeof(ngx_http_proxy_ctx_t));
+    if (ctx == NULL) {
+        return NGX_ERROR;
+    }
+
+    ngx_http_set_ctx(r, ctx, ngx_http_proxy_module);
+
+    plcf = ngx_http_get_module_loc_conf(r, ngx_http_proxy_module);
+
+    u = r-&gt;upstream; // 刚刚创建的
+
+    if (plcf-&gt;proxy_lengths == NULL) {
+        ctx-&gt;vars = plcf-&gt;vars;
+        u-&gt;schema = plcf-&gt;vars.schema;
+#if (NGX_HTTP_SSL)
+        u-&gt;ssl = (plcf-&gt;upstream.ssl != NULL);
+#endif
+
+    } else {  // proxy_pass 的参数可以是 ngx script, 所以在这里对于可变的参数进行解析.
+        if (ngx_http_proxy_eval(r, ctx, plcf) != NGX_OK) {
+            return NGX_HTTP_INTERNAL_SERVER_ERROR;
+        }
+    }
+
+    u-&gt;output.tag = (ngx_buf_tag_t) &amp;ngx_http_proxy_module;
+
+    u-&gt;conf = &amp;plcf-&gt;upstream;
+
+#if (NGX_HTTP_CACHE)
+    pmcf = ngx_http_get_module_main_conf(r, ngx_http_proxy_module);
+
+    u-&gt;caches = &amp;pmcf-&gt;caches;
+    u-&gt;create_key = ngx_http_proxy_create_key;
+#endif
+
+    u-&gt;create_request = ngx_http_proxy_create_request;
+    u-&gt;reinit_request = ngx_http_proxy_reinit_request;
+    u-&gt;process_header = ngx_http_proxy_process_status_line;
+    u-&gt;abort_request = ngx_http_proxy_abort_request;
+    u-&gt;finalize_request = ngx_http_proxy_finalize_request;
+    r-&gt;state = 0;
+
+    if (plcf-&gt;redirects) {
+        u-&gt;rewrite_redirect = ngx_http_proxy_rewrite_redirect;
+    }
+
+    if (plcf-&gt;cookie_domains || plcf-&gt;cookie_paths) {
+        u-&gt;rewrite_cookie = ngx_http_proxy_rewrite_cookie;
+    }
+
+    u-&gt;buffering = plcf-&gt;upstream.buffering;
+
+    u-&gt;pipe = ngx_pcalloc(r-&gt;pool, sizeof(ngx_event_pipe_t));
+    if (u-&gt;pipe == NULL) {
+        return NGX_HTTP_INTERNAL_SERVER_ERROR;
+    }
+
+    u-&gt;pipe-&gt;input_filter = ngx_http_proxy_copy_filter;
+    u-&gt;pipe-&gt;input_ctx = r;
+
+    u-&gt;input_filter_init = ngx_http_proxy_input_filter_init;
+    u-&gt;input_filter = ngx_http_proxy_non_buffered_copy_filter;
+    u-&gt;input_filter_ctx = r;
+
+    u-&gt;accel = 1;
+
+    // goto upstream
+    rc = ngx_http_read_client_request_body(r, ngx_http_upstream_init);
+
+    if (rc &gt;= NGX_HTTP_SPECIAL_RESPONSE) {
+        return rc;
+    }
+
+    return NGX_DONE;
+}
+</pre>
+</p>
+
+<p>create upstream 的处理也是很简单, 就是分配了内存并初始化了一些变量. 但是一个请求有可能有多个 upstream,
+所以如果有必要会对于 upstream 进行 cleanup 操作.</p>
+
+<p>在创建了 upstream 后就是设置了一系列的回调函数, upstream 是一个框架, 这个框架里一些细节的东西要依据不同的功能
+使用不同的方法处理. 同时还设置一个 upstream 的配置信息如: buffering.</p>
+
+<p><table>
+<tr><td>create_request </td><td>	生成发送到后端服务器的请求缓冲（缓冲链），在初始化upstream 时使用。</td></tr>
+<tr><td>reinit_request	</td><td>在某台后端服务器出错的情况，nginx会尝试另一台后端服务器。 nginx选定新的服务器以后，会先调用此函数，以重新初始化 upstream模块的工作状态，然后再次进行upstream连接。</td></tr>
+<tr><td>process_header	</td><td>处理后端服务器返回的信息头部。所谓头部是与upstream server 通信的协议规定的，比如HTTP协议的header部分，或者memcached 协议的响应状态部分。</td></tr>
+<tr><td>abort_request	</td><td>在客户端放弃请求时被调用。不需要在函数中实现关闭后端服务 器连接的功能，系统会自动完成关闭连接的步骤，所以一般此函 数不会进行任何具体工作。</td></tr>
+<tr><td>finalize_request</td><td>	正常完成与后端服务器的请求后调用该函数，与abort_request 相同，一般也不会进行任何具体工作。</td></tr>
+<tr><td>input_filter	</td><td>处理后端服务器返回的响应正文。nginx默认的input_filter会 将收到的内容封装成为缓冲区链ngx_chain。该链由upstream的 out_bufs指针域定位，所以开发人员可以在模块以外通过该指针 得到后端服务器返回的正文数据。memcached模块实现了自己的 input_filter，在后面会具体分析这个模块。</td></tr>
+<tr><td>input_filter_init	</td><td>初始化input filter的上下文。nginx默认的input_filter_init 直接返回。</td></tr>
+</table>
+这些回调后面都会遇到进行详细的说明.</p>
+
+<p>我们从这里就开启进入了 upstream 的逻辑里去了.</p>
+
+<h4>ngx_http_upstream_init_request</h4>
+<p>ngx_http_upstream_init并没有什么特别的工作, 直接调用了 ngx_http_upstream_init_request,
+这个函数很长, 其实我是不太喜欢这么长的函数的.</p>
+
+<p>这个函数开始注册两个函数用于检查与客户端的连接是否可用:
+<pre>
+    if (!u-&gt;store &amp;&amp; !r-&gt;post_action &amp;&amp; !u-&gt;conf-&gt;ignore_client_abort) {
+        r-&gt;read_event_handler = ngx_http_upstream_rd_check_broken_connection;
+        r-&gt;write_event_handler = ngx_http_upstream_wr_check_broken_connection;
+    }
+</pre>
+</p>
+
+<p>之后从请求中得到请求体:
+<pre>
+    if (r-&gt;request_body) {
+        u-&gt;request_bufs = r-&gt;request_body-&gt;bufs;
+    }
+</pre>
+</p>
+
+<p>接下来就是调用 create_request 来创建请求. 之后就是使用对于 r->upstream_states 进行初始化.
+再之后就挂载一些清理函数.</p>
+
+<p>下面就是对于要连接的地址进行选择. 如果是使用 balancer 那么就是会进入到:
+<pre>
+
+found:
+
+    if (uscf == NULL) {
+        ngx_log_error(NGX_LOG_ALERT, r-&gt;connection-&gt;log, 0,
+                      "no upstream configuration");
+        ngx_http_upstream_finalize_request(r, u,
+                                           NGX_HTTP_INTERNAL_SERVER_ERROR);
+        return;
+    }
+
+#if (NGX_HTTP_SSL)
+    u-&gt;ssl_name = uscf-&gt;host;
+#endif
+
+    if (uscf-&gt;peer.init(r, uscf) != NGX_OK) { // 初始化 balancer
+        ngx_http_upstream_finalize_request(r, u,
+                                           NGX_HTTP_INTERNAL_SERVER_ERROR);
+        return;
+    }
+
+    u-&gt;peer.start_time = ngx_current_msec;
+
+    if (u-&gt;conf-&gt;next_upstream_tries  // 全局的重次参数
+        &amp;&amp; u-&gt;peer.tries &gt; u-&gt;conf-&gt;next_upstream_tries)
+    {
+        u-&gt;peer.tries = u-&gt;conf-&gt;next_upstream_tries;
+    }
+
+    ngx_http_upstream_connect(r, u); // 连接上流服务器.
+
+
+</pre>
+</p>
+
+<h4>ngx_http_upstream_connect</h4>
+<p>这个函数是 upstream 中很重要的函数, 这里已经开始了对于上游服务的连接.</p>
+
+<p><pre>
+static void
+ngx_http_upstream_connect(ngx_http_request_t *r, ngx_http_upstream_t *u)
+{
+    ngx_int_t          rc;
+    ngx_time_t        *tp;
+    ngx_connection_t  *c;
+
+    r-&gt;connection-&gt;log-&gt;action = "connecting to upstream";
+
+    // connect 函数是一个可以重入的函数, 有可能已经连接过了, 但是失败了这个时候
+    // 记录下前一次使用的时候
+    if (u-&gt;state &amp;&amp; u-&gt;state-&gt;response_sec) {
+        tp = ngx_timeofday();
+        u-&gt;state-&gt;response_sec = tp-&gt;sec - u-&gt;state-&gt;response_sec;
+        u-&gt;state-&gt;response_msec = tp-&gt;msec - u-&gt;state-&gt;response_msec;
+    }
+
+    // 从 upstream_states 中得到下一个可以使用的空间
+    u-&gt;state = ngx_array_push(r-&gt;upstream_states);
+    if (u-&gt;state == NULL) {
+        ngx_http_upstream_finalize_request(r, u,
+                                           NGX_HTTP_INTERNAL_SERVER_ERROR);
+        return;
+    }
+
+    ngx_memzero(u-&gt;state, sizeof(ngx_http_upstream_state_t));
+
+    // 记录当前的时间
+    tp = ngx_timeofday();
+    u-&gt;state-&gt;response_sec = tp-&gt;sec;  //  用于记录处理整个响应时间
+    u-&gt;state-&gt;response_msec = tp-&gt;msec;
+
+    // 用于记录收到的响应头的时候, 这个时候没有记录, 实现的技巧, 从后面可以理解
+    u-&gt;state-&gt;header_sec = (time_t) NGX_ERROR;
+
+    // 连接到服务器生成一个可用的连接. 这个函数中会调用 balancer 中的 get 函数得到地址.
+    // 然后去连接服务器.
+    // 但是如果开启了 keepalive. keepalive 会返回 NGX_DONE 不连接到新的连接. 而是直接
+    // 使用旧的连接, ngx_event_connect_peer 会直接退出.
+    rc = ngx_event_connect_peer(&amp;u-&gt;peer);
+
+    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r-&gt;connection-&gt;log, 0,
+                   "http upstream connect: %i", rc);
+
+    // 可以是 balancer 返回, 也可以是 ngx_event_connect_peer 返回
+    if (rc == NGX_ERROR) {
+        ngx_http_upstream_finalize_request(r, u,
+                                           NGX_HTTP_INTERNAL_SERVER_ERROR);
+        return;
+    }
+
+    u-&gt;state-&gt;peer = u-&gt;peer.name;
+
+    // balancer 可能会返回 NGX_BUSY 这个时候会返回 502
+    if (rc == NGX_BUSY) {
+        ngx_log_error(NGX_LOG_ERR, r-&gt;connection-&gt;log, 0, "no live upstreams");
+        ngx_http_upstream_next(r, u, NGX_HTTP_UPSTREAM_FT_NOLIVE);
+        return;
+    }
+
+    if (rc == NGX_DECLINED) {
+        ngx_http_upstream_next(r, u, NGX_HTTP_UPSTREAM_FT_ERROR);
+        return;
+    }
+
+    /* rc == NGX_OK || rc == NGX_AGAIN || rc == NGX_DONE */
+
+    c = u-&gt;peer.connection;
+
+    c-&gt;data = r;
+
+    c-&gt;write-&gt;handler = ngx_http_upstream_handler;
+    c-&gt;read-&gt;handler = ngx_http_upstream_handler;
+
+    // 写事件: 发送请求
+    u-&gt;write_event_handler = ngx_http_upstream_send_request_handler;
+    // 读事件: 处理响应头
+    u-&gt;read_event_handler = ngx_http_upstream_process_header;
+
+    c-&gt;sendfile &amp;= r-&gt;connection-&gt;sendfile;
+    u-&gt;output.sendfile = c-&gt;sendfile;
+
+    if (c-&gt;pool == NULL) {
+
+        /* we need separate pool here to be able to cache SSL connections */
+
+        c-&gt;pool = ngx_create_pool(128, r-&gt;connection-&gt;log);
+        if (c-&gt;pool == NULL) {
+            ngx_http_upstream_finalize_request(r, u,
+                                               NGX_HTTP_INTERNAL_SERVER_ERROR);
+            return;
+        }
+    }
+
+    c-&gt;log = r-&gt;connection-&gt;log;
+    c-&gt;pool-&gt;log = c-&gt;log;
+    c-&gt;read-&gt;log = c-&gt;log;
+    c-&gt;write-&gt;log = c-&gt;log;
+
+    /* init or reinit the ngx_output_chain() and ngx_chain_writer() contexts */
+
+    u-&gt;writer.out = NULL;
+    u-&gt;writer.last = &amp;u-&gt;writer.out;
+    u-&gt;writer.connection = c;
+    u-&gt;writer.limit = 0;
+
+    if (u-&gt;request_sent) {
+        if (ngx_http_upstream_reinit(r, u) != NGX_OK) {
+            ngx_http_upstream_finalize_request(r, u,
+                                               NGX_HTTP_INTERNAL_SERVER_ERROR);
+            return;
+        }
+    }
+
+    if (r-&gt;request_body
+        &amp;&amp; r-&gt;request_body-&gt;buf
+        &amp;&amp; r-&gt;request_body-&gt;temp_file
+        &amp;&amp; r == r-&gt;main)
+    {
+        /*
+         * the r-&gt;request_body-&gt;buf can be reused for one request only,
+         * the subrequests should allocate their own temporary bufs
+         */
+
+        u-&gt;output.free = ngx_alloc_chain_link(r-&gt;pool);
+        if (u-&gt;output.free == NULL) {
+            ngx_http_upstream_finalize_request(r, u,
+                                               NGX_HTTP_INTERNAL_SERVER_ERROR);
+            return;
+        }
+
+        u-&gt;output.free-&gt;buf = r-&gt;request_body-&gt;buf;
+        u-&gt;output.free-&gt;next = NULL;
+        u-&gt;output.allocated = 1;
+
+        r-&gt;request_body-&gt;buf-&gt;pos = r-&gt;request_body-&gt;buf-&gt;start;
+        r-&gt;request_body-&gt;buf-&gt;last = r-&gt;request_body-&gt;buf-&gt;start;
+        r-&gt;request_body-&gt;buf-&gt;tag = u-&gt;output.tag;
+    }
+
+    u-&gt;request_sent = 0;
+
+    if (rc == NGX_AGAIN) { // TODO 这里没有明白
+        ngx_add_timer(c-&gt;write, u-&gt;conf-&gt;connect_timeout);
+        return;
+    }
+
+#if (NGX_HTTP_SSL)
+
+    if (u-&gt;ssl &amp;&amp; c-&gt;ssl == NULL) {
+        ngx_http_upstream_ssl_init_connection(r, u, c);
+        return;
+    }
+
+#endif
+
+    // 对网络进行测试, 对于定时进行处理
+    ngx_http_upstream_send_request(r, u);
+}
+</pre>
+</p>
+
+<p>发送请求:
+<pre>
+static void
+ngx_http_upstream_send_request(ngx_http_request_t *r, ngx_http_upstream_t *u)
+{
+    ngx_int_t          rc;
+    ngx_connection_t  *c;
+
+    c = u-&gt;peer.connection;
+
+    ngx_log_debug0(NGX_LOG_DEBUG_HTTP, c-&gt;log, 0,
+                   "http upstream send request");
+
+    // 没有发送过请求, 就对于网络进行一下测试
+    if (!u-&gt;request_sent &amp;&amp; ngx_http_upstream_test_connect(c) != NGX_OK) {
+        ngx_http_upstream_next(r, u, NGX_HTTP_UPSTREAM_FT_ERROR);
+        return;
+    }
+
+    c-&gt;log-&gt;action = "sending request to upstream";
+
+    // 发送数据
+    rc = ngx_output_chain(&amp;u-&gt;output, u-&gt;request_sent ? NULL : u-&gt;request_bufs);
+
+    u-&gt;request_sent = 1;
+
+    if (rc == NGX_ERROR) {
+        ngx_http_upstream_next(r, u, NGX_HTTP_UPSTREAM_FT_ERROR);
+        return;
+    }
+
+    if (c-&gt;write-&gt;timer_set) {
+        ngx_del_timer(c-&gt;write);
+    }
+
+    // 数据没有发送完成, 增加事件, 继续发送
+    if (rc == NGX_AGAIN) {
+        ngx_add_timer(c-&gt;write, u-&gt;conf-&gt;send_timeout);
+
+        if (ngx_handle_write_event(c-&gt;write, u-&gt;conf-&gt;send_lowat) != NGX_OK) {
+            ngx_http_upstream_finalize_request(r, u,
+                                               NGX_HTTP_INTERNAL_SERVER_ERROR);
+            return;
+        }
+
+        return;
+    }
+
+    /* rc == NGX_OK */
+
+    if (c-&gt;tcp_nopush == NGX_TCP_NOPUSH_SET) {
+        if (ngx_tcp_push(c-&gt;fd) == NGX_ERROR) {
+            ngx_log_error(NGX_LOG_CRIT, c-&gt;log, ngx_socket_errno,
+                          ngx_tcp_push_n " failed");
+            ngx_http_upstream_finalize_request(r, u,
+                                               NGX_HTTP_INTERNAL_SERVER_ERROR);
+            return;
+        }
+
+        c-&gt;tcp_nopush = NGX_TCP_NOPUSH_UNSET;
+    }
+
+    // 不会再写了
+    u-&gt;write_event_handler = ngx_http_upstream_dummy_handler;
+
+    if (ngx_handle_write_event(c-&gt;write, 0) != NGX_OK) {
+        ngx_http_upstream_finalize_request(r, u,
+                                           NGX_HTTP_INTERNAL_SERVER_ERROR);
+        return;
+    }
+
+    // 增加读定时器
+    ngx_add_timer(c-&gt;read, u-&gt;conf-&gt;read_timeout);
+
+    if (c-&gt;read-&gt;ready) {
+        //如果发送成功处理响应
+        ngx_http_upstream_process_header(r, u);
+        return;
+    }
+}
+
+</pre>
+</p>
+
+<h3>ngx_http_upstream_process_header</h3>
+<p>这个函数完成接收数据与调用 process_header 的功能.
+这里说明一个大体的过程, process_header 在 http proxy 里的回调一开始是 ngx_http_proxy_process_status_line
+而这个函数处理完成的时候, 并不是直接返回成功而是把这个回调再次修改成 ngx_http_proxy_process_header.
+这样的结果就是 upstream 同一个回调支持起了对于响应行与响应头的两个阶段的处理.</p>
+
+<p><pre>
+
+    tp = ngx_timeofday();
+    u-&gt;state-&gt;header_sec = tp-&gt;sec - u-&gt;state-&gt;response_sec; // 记录接收到响应头用了多少时间
+    u-&gt;state-&gt;header_msec = tp-&gt;msec - u-&gt;state-&gt;response_msec;
+
+    // 注意这里, 要对于状态态进行分析, 也就是说这里默认的情况下认为响应的是 http
+    // 因为这里的结果要返回给用户, 所以就算请求出动不是 http, 响应应该是http, 比如 fastcgi
+    // 如果响应不是 http 比如 memcached, 就应该在模块里设置 status_n
+    if (u-&gt;headers_in.status_n &gt;= NGX_HTTP_SPECIAL_RESPONSE) {
+
+        if (ngx_http_upstream_test_next(r, u) == NGX_OK) {
+            return;
+        }
+
+        if (ngx_http_upstream_intercept_errors(r, u) == NGX_OK) {
+            return;
+        }
+    }
+
+    // 对于响应进行检查, 并copy
+    if (ngx_http_upstream_process_headers(r, u) != NGX_OK) {
+        return;
+    }
+
+    // 如果不使用缓存, 立即返回给用户
+    if (!r-&gt;subrequest_in_memory) { // 没有子请求, 直接发送响应给客户端
+        ngx_http_upstream_send_response(r, u);
+        return;
+    }
+
+    /* subrequest content in memory */
+
+    if (u-&gt;input_filter == NULL) {
+        u-&gt;input_filter_init = ngx_http_upstream_non_buffered_filter_init;
+        u-&gt;input_filter = ngx_http_upstream_non_buffered_filter;
+        u-&gt;input_filter_ctx = r;
+    }
+
+    if (u-&gt;input_filter_init(u-&gt;input_filter_ctx) == NGX_ERROR) {
+        ngx_http_upstream_finalize_request(r, u, NGX_ERROR);
+        return;
+    }
+
+    ........
+
+    u-&gt;read_event_handler = ngx_http_upstream_process_body_in_memory;
+
+    ngx_http_upstream_process_body_in_memory(r, u);
+</pre>
+
+这里就处理到了给用户发送数据的阶段了, 这里有两种情况 1. buffering 2. no buffering
+前者是接收一些数据发送一些, 后者是缓存一定的数据后再发送.</p>
+
+<h3>buffering</h3>
+<p>这种情况 ngx 会使用一个缓存, 不同于 no buffering 的处理过程. 相对的也会比较复杂一些.
+好处是可以平衡之间的速度.</p>
+
+<p>这个过程中使用了 event_pipe, 用于 upstream 与 client 之间.
+下面是其核心的数据结构:
+<pre>
+struct ngx_event_pipe_s {//nginx处理buffering机制的结构
+    ngx_connection_t  *upstream;//表示nginx和后端的两条连接
+    ngx_connection_t  *downstream;//这个表示客户端的连接
+
+    ngx_chain_t       *free_raw_bufs;//保存了从upstream读取的数据(没有经过任何处理的)，以及缓存的buf.
+    ngx_chain_t       *in;
+    //每次读取数据后，调用input_filter对协议格式进行解析，解析完后的数据部分放到in里面形成一个链表。
+    /*关于p-&gt;in和shadow，多说一下，in指向一堆chain链表，每个链表指向一块实实在在的fcgi DATA数据，
+      多个这样的html代码块共享一块大的裸FCGI数据块；
+      属于某个大的裸FCGI数据块的最后一个数据节点的last_shadow成员为1，
+      表示我是这个大FCGI数据块的最后一个，并且我的shadow指针指向这个裸FCGI数据块的buf指针
+      释放这些大数据块的时候，可以参考ngx_event_pipe_drain_chains进行释放。
+     */
+
+    ngx_chain_t      **last_in;//上面的in结构的最后一个节点的next指针的地址，p-&gt;last_in = &amp;cl-&gt;next;，
+                    这样就可以将新分析到的FCGI数据链接到后面了。
+
+    //out 指放入文件中的buffer，其总是在in所指向的buf链表的前面，发送前先发送这个
+
+    ngx_chain_t       *out;//buf到tempfile的数据会放到out里面。在ngx_event_pipe_write_chain_to_temp_file函数里面设置的。
+
+    ngx_chain_t      **last_out;
+
+
+    ngx_chain_t       *free;//这里就是那些空闲的内存节点，从busy移动过来的。注意是节点，不是buf
+    ngx_chain_t       *busy;
+    //代表经过了output_filter过的，从out移动过来的缓存，其里面可能有已经发送完成了，
+    //因为ngx_http_write_filter会更新这写buf的
+
+    /*
+     * the input filter i.e. that moves HTTP/1.1 chunks
+     * from the raw bufs to an incoming chain
+     *///FCGI为ngx_http_fastcgi_input_filter，其他为ngx_event_pipe_copy_input_filter 。用来解析特定格式数据
+    ngx_event_pipe_input_filter_pt    input_filter;//这个用来解析对应协议的数据。比如解析FCGI协议的数据。
+    void                             *input_ctx;
+
+
+
+    ngx_event_pipe_output_filter_pt   output_filter;//ngx_http_output_filter输出filter
+
+    void                             *output_ctx;
+
+
+
+    unsigned           read:1;//标记是否读了数据。
+    unsigned           cacheable:1;
+    unsigned           single_buf:1;//如果使用了NGX_USE_AIO_EVENT异步IO标志，则设置为1
+    unsigned           free_bufs:1;
+    unsigned           upstream_done:1;
+    unsigned           upstream_error:1;
+    unsigned           upstream_eof:1;
+    unsigned           upstream_blocked:1;//ngx_event_pipe用来标记是否读取了upstream的数据来决定是不是要write
+    unsigned           downstream_done:1;
+    unsigned           downstream_error:1;
+    unsigned           cyclic_temp_file:1;
+
+    ngx_int_t          allocated;//表示已经分配了的bufs的个数，每次会++
+    //fastcgi_buffers等指令设置的nginx用来缓存body的内存块数目以及大小。ngx_conf_set_bufs_slot函数会解析这样的配置。
+    //对应xxx_buffers,也就是读取后端的数据时的bufer大小以及个数
+    ngx_bufs_t         bufs;
+    ngx_buf_tag_t      tag;
+
+    ssize_t            busy_size;//fastcgi_busy_buffers_size 指令或者其他upstream设置的大小，作用为最大的busy状态的内存总容量。
+
+    //文档介绍 : mits the total size of buffers that can be busy sending a response to the client while the response is not yet fully read.
+
+
+
+    off_t              read_length;//从upstream读取的数据长度
+
+    off_t              max_temp_file_size;
+    ssize_t            temp_file_write_size;
+    ngx_msec_t         read_timeout;
+    ngx_msec_t         send_timeout;
+    ssize_t            send_lowat;
+
+    ngx_pool_t        *pool;
+    ngx_log_t         *log;
+
+
+
+    //指读取upstream的时候多读的，或者说预读的body部分数据。p-&gt;preread_bufs-&gt;buf = &amp;u-&gt;buffer;
+    ngx_chain_t       *preread_bufs;
+    size_t             preread_size;
+    ngx_buf_t         *buf_to_file;
+
+    ngx_temp_file_t   *temp_file;
+    /* STUB */ int     num;
+
+};
+</pre>
+</p>
+
+<p>下面是 ngx_http_upstream_send_response 关于 buffering 开启了的情况下, 对于 pip 进行初始化的代码:
+<pre>
+    p = u-&gt;pipe;
+
+    p-&gt;output_filter = (ngx_event_pipe_output_filter_pt) ngx_http_output_filter;
+    p-&gt;output_ctx = r;
+    p-&gt;tag = u-&gt;output.tag;
+    p-&gt;bufs = u-&gt;conf-&gt;bufs;// 配置的 buf 的大小与个数
+    p-&gt;busy_size = u-&gt;conf-&gt;busy_buffers_size;
+    p-&gt;upstream = u-&gt;peer.connection; // 与后端的连接
+    p-&gt;downstream = c; // 与 client 的连接
+    p-&gt;pool = r-&gt;pool;
+    p-&gt;log = c-&gt;log;
+    p-&gt;limit_rate = u-&gt;conf-&gt;limit_rate;
+    p-&gt;start_sec = ngx_time();
+
+    p-&gt;cacheable = u-&gt;cacheable || u-&gt;store;
+
+    p-&gt;temp_file = ngx_pcalloc(r-&gt;pool, sizeof(ngx_temp_file_t));
+    if (p-&gt;temp_file == NULL) {
+        ngx_http_upstream_finalize_request(r, u, NGX_ERROR);
+        return;
+    }
+
+    p-&gt;temp_file-&gt;file.fd = NGX_INVALID_FILE;
+    p-&gt;temp_file-&gt;file.log = c-&gt;log;
+    p-&gt;temp_file-&gt;path = u-&gt;conf-&gt;temp_path;
+    p-&gt;temp_file-&gt;pool = r-&gt;pool;
+
+    if (p-&gt;cacheable) {
+        p-&gt;temp_file-&gt;persistent = 1;
+
+    } else {
+        p-&gt;temp_file-&gt;log_level = NGX_LOG_WARN;
+        p-&gt;temp_file-&gt;warn = "an upstream response is buffered "
+                             "to a temporary file";
+    }
+
+    p-&gt;max_temp_file_size = u-&gt;conf-&gt;max_temp_file_size;
+    p-&gt;temp_file_write_size = u-&gt;conf-&gt;temp_file_write_size;
+
+    //指读取upstream的时候多读的，或者说预读的body部分数据。p-&gt;preread_bufs-&gt;buf = &amp;u-&gt;buffer;
+    p-&gt;preread_bufs = ngx_alloc_chain_link(r-&gt;pool);
+    if (p-&gt;preread_bufs == NULL) {
+        ngx_http_upstream_finalize_request(r, u, NGX_ERROR);
+        return;
+    }
+
+    p-&gt;preread_bufs-&gt;buf = &amp;u-&gt;buffer;
+    p-&gt;preread_bufs-&gt;next = NULL;
+    u-&gt;buffer.recycled = 1;
+
+    p-&gt;preread_size = u-&gt;buffer.last - u-&gt;buffer.pos;
+
+    if (u-&gt;cacheable) {
+
+        p-&gt;buf_to_file = ngx_calloc_buf(r-&gt;pool);
+        if (p-&gt;buf_to_file == NULL) {
+            ngx_http_upstream_finalize_request(r, u, NGX_ERROR);
+            return;
+        }
+
+        p-&gt;buf_to_file-&gt;start = u-&gt;buffer.start;
+        p-&gt;buf_to_file-&gt;pos = u-&gt;buffer.start;
+        p-&gt;buf_to_file-&gt;last = u-&gt;buffer.pos;
+        p-&gt;buf_to_file-&gt;temporary = 1;
+    }
+
+    if (ngx_event_flags &amp; NGX_USE_AIO_EVENT) {
+        /* the posted aio operation may corrupt a shadow buffer */
+        p-&gt;single_buf = 1;
+    }
+
+    /* TODO: p-&gt;free_bufs = 0 if use ngx_create_chain_of_bufs() */
+    p-&gt;free_bufs = 1;
+
+    /*
+     * event_pipe would do u-&gt;buffer.last += p-&gt;preread_size
+     * as though these bytes were read
+     */
+    u-&gt;buffer.last = u-&gt;buffer.pos;
+
+    if (u-&gt;conf-&gt;cyclic_temp_file) {
+
+        /*
+         * we need to disable the use of sendfile() if we use cyclic temp file
+         * because the writing a new data may interfere with sendfile()
+         * that uses the same kernel file pages (at least on FreeBSD)
+         */
+
+        p-&gt;cyclic_temp_file = 1;
+        c-&gt;sendfile = 0;
+
+    } else {
+        p-&gt;cyclic_temp_file = 0;
+    }
+
+    p-&gt;read_timeout = u-&gt;conf-&gt;read_timeout;
+    p-&gt;send_timeout = clcf-&gt;send_timeout;
+    p-&gt;send_lowat = clcf-&gt;send_lowat;
+
+    p-&gt;length = -1;
+
+    if (u-&gt;input_filter_init
+        &amp;&amp; u-&gt;input_filter_init(p-&gt;input_ctx) != NGX_OK)
+    {
+        ngx_http_upstream_finalize_request(r, u, NGX_ERROR);
+        return;
+    }
+
+    u-&gt;read_event_handler = ngx_http_upstream_process_upstream;
+    r-&gt;write_event_handler = ngx_http_upstream_process_downstream;
+
+    ngx_http_upstream_process_upstream(r, u);
+</pre>
+
+完成回调的情况下 调用 ngx_http_upstream_process_upstream 进行处理.
+这个函数也是回调函数, 在 upstream 可读的情况下 以及 下流可写的情况下会调用这个函数.
+<pre>
+static void
+ngx_http_upstream_process_upstream(ngx_http_request_t *r,
+    ngx_http_upstream_t *u)
+{
+   ......
+
+    if (rev-&gt;timedout) {
+      ...... // 处理超时
+
+    } else {
+        ......
+
+        if (ngx_event_pipe(p, 0) == NGX_ABORT) { // 调用 pip 完成处理
+            ngx_http_upstream_finalize_request(r, u, NGX_ERROR);
+            return;
+        }
+    }
+
+    ngx_http_upstream_process_request(r); // //处理了一下是否需要吧数据写到磁盘上
+}
+</pre>
+</p>
+
+<p>到这里就进入了 ngx_event_pipe. 关于pipe 的实现是一个单独的文件中实现的:
+src/event/ngx_event_pipe.c . 这里实现了关于pipe 的逻辑.</p>
+
+<h3>ngx_event_pipe</h3>
+<p>pipe 的目的就把后端的数据发送到前端, 这个过程要不断地从后端读取数据, 再向前端写入.</p>
+
+<p>所以这个函数就是一断循环. 如果第二个参数为真, 这个循环第一次开始就会先向 downstream 写数据,
+否则就会先读取数据, 如果成功再向后端写数据.
+<pre>
+    for ( ;; ) {
+        if (do_write) {
+            p-&gt;log-&gt;action = "sending to client";
+
+            rc = ngx_event_pipe_write_to_downstream(p);
+
+            if (rc == NGX_ABORT) {
+                return NGX_ABORT;
+            }
+
+            if (rc == NGX_BUSY) {
+                return NGX_OK;
+            }
+        }
+
+        p-&gt;read = 0;
+        p-&gt;upstream_blocked = 0;
+
+        p-&gt;log-&gt;action = "reading upstream";
+
+        if (ngx_event_pipe_read_upstream(p) == NGX_ABORT) {
+            return NGX_ABORT;
+        }
+
+        if (!p-&gt;read &amp;&amp; !p-&gt;upstream_blocked) {
+            break;
+        }
+
+        do_write = 1;
+    }
+</pre>
+</p>
+
+<p>这里两个实现分别是 ngx_event_pipe_read_upstream, ngx_event_pipe_write_to_downstream.
+这两个函数是实现这个过程的主要逻辑.
+如下是调用过程:
+
+    <ul>
+
+        <li>ngx_single_process_cycle循环调用ngx_process_events_and_timers，后者调用ngx_epoll_process_events处理读写事件；
+
+        <li>c->read->handler = ngx_http_upstream_handler()；SOCK连接最基础的读写回调handler，
+
+        <li>u->read_event_handler = ngx_http_upstream_process_upstream()；
+
+        <li>ngx_event_pipe()；
+
+        <li>ngx_event_pipe_read_upstream()/ngx_event_pipe_write_to_downstream() 进入主要读取或写入数据 。
+    </ul></p>
+
+<p>后面对于 read upstream 与 write to downstream 的说明, 后面再写.</p>

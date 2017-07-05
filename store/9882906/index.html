@@ -1,0 +1,191 @@
+<p></p>
+
+<h3>nginx的upstream目前支持负载均衡方式的分配</h3>
+<p>
+    <ul>
+
+        <li>RR（默认）</p>
+
+<p> 每个请求按时间顺序逐一分配到不同的后端服务器，假如后端服务器down掉，能自动剔除。
+ 例如：
+<pre>
+  upstream tomcats {
+  server 10.1.1.107:88 max_fails=3 fail_timeout=3s weight=9;
+  server 10.1.1.132:80 max_fails=3 fail_timeout=3s weight=9;
+  }
+</pre>
+</p>
+
+<p>
+        <li>ip_hash</p>
+
+<p> 每个请求按访问ip的hash结果分配，这样每个访客固定访问一个后端服务器，可以解决session的题目。
+ 例如：
+<pre>
+  upstream tomcats {
+  ip_hash;
+  server 10.1.1.107:88;
+  server 10.1.1.132:80;
+  }
+</pre>
+</p>
+
+<p>
+        <li>fair（第三方）</p>
+
+<p> 按后端服务器的响应时间来分配请求，响应时间短的优先分配。
+
+        <li>url_hash（第三方）</p>
+
+<p> 按访问url的hash结果来分配请求，使每个url定向到同一个后端服务器，后端服务器为缓存时比较有效。
+    </ul>
+ 下面，我们针对RR和ip_hash的负载均衡策略进行分析。由于每一种负载均衡策略都是在upstream的框架中使用，
+upstream控制总的工作流程，负载均衡策略仅仅提供选择或开释server的函数，
+所以，我们在分析RR时结合upstream（ngx_http_upstream.c）。
+ip_hash大部分内容与RR一致，只是重新实现RR中的ngx_http_upstream_get_peer函数。</p>
+
+<h3>RR策略</h3>
+<p>RR机制分为三个部分：初始化upstream，获取一个可用的后台服务器和开释后台服务器。
+ 以下分析以此配置为例:
+<pre>
+  upstream backend {
+  server A max_fails=3 fail_timeout=4s weight=9;
+  server B max_fails=3 fail_timeout=4s weight=9;
+  server C max_fails=3 fail_timeout=4s weight=9;
+  server D backup;
+  Server E backup;
+  }
+</pre>
+</p>
+
+<h4>初始化upstream</h4>
+<p>对于例子中的upstream backend来说，
+ 首先初始化各个server, 除了设置IP和端口号外，还要设置如下置weight，current_weight，max_fails和fail_timeout。
+ 其中max_fails和fail_timeout 这两个参数是组合使用的，表示server 假如失败次数达到max_fails 次，并保持fail_timeout秒之内该服务器不能被访问。</p>
+
+<p> 对于serverA来说，设置如下
+<pre>
+  serverA.weight =9;
+  serverA.current_weight = 9; //初始值即是配置文件中的weight.
+  serverA.max_fails = 3;
+  serverA.fail_timeout = 4;
+</pre>
+</p>
+
+<p> 接着，创建两个server类型（在下文先容中，server类型等同于peer类型，都是用来指明存储upstream中一个server的信息）的数组，peers和backup，
+分别存储正常的轮循server和备用server. 并窃冬按照数组中各个server的weight值的大小，由高到底排序。
+ 本例中，在数组peers中存储serverA、serverB和serverC, 并记录server的总个数peers->number=3; 在数组backup中存储serverD和serverE, 并记录server的总个数backup->number=2;</p>
+
+<p> 最后，设置upstream中各个变量的值。
+ rrp 表示当前要轮循的server数组，初始设置为Upstream->rrp = peers.
+ tries 表示尝试的次数，当尝试一个server失败后，tries的值就会减一。初始设置为peers的总个数。
+ Next 表示当peers数组中server都失败，不能提供服务了，通过upstream->next，切换到back数组中选择server.</p>
+
+<h4>具体的RR策略</h4>
+<p>选择最初要轮循的server, 把它给rrp->current变量.</p>
+
+<p>当一个客户端请求到达nginx后，nginx就会在upstream的peers 数组中挑选一个current_weight最大的server作为当前请求最初要轮循的server. 在peers数组中选取current_weight最大的算法如下：
+ 由于peers数组中的server是按照weight值的大小排序好的。
+ 它是通过双重循环，满足下列条件后,
+<pre>
+  if (peer[n].current_weight * 1000 / peer[i].current_weight &gt; peer[n].weight * 1000 / peer[i].weight) //peer[i].current_weight不为0
+</pre>
+</p>
+
+<p> 并且该server的current_weight大于0，就选择sever n, 把编号n赋给rrp->current，成功返回。</p>
+
+<p> 假如当upstream的peers 数组中的所有server的current_weight都为零时，立即无条件地把所有server的current_weight设置为初始值。
+<pre>
+for (i = 0; i &lt; peers-&gt;number; i++) {
+  peer[i].current_weight = peer[i].weight;
+  }
+</pre>
+</p>
+
+<p> 然后，当所有server的current_weight设置为初始值后，重新查找peers 数组中current_weight最大的server。把编号赋给rrp->current，返回。</p>
+
+<p> 2.2.2 判定当前rrp->current所指向的server是否有效，假如无效，就会让rrp->current++，判定peers数组中下一个server，是否有效。至到找到有效的server为止. 跳转到2.2.3; 否则跳转到2.2.2.1
+ 判定server 是否有效的方法是：
+
+    <ul>
+
+        <li>假如server的失败次数（peers->peer[i].fails）没有达到了max_fails所设置的最大失败次数，则该server是有效的。
+
+        <li>假如server已经达到了max_fails所设置的最大失败次数，从这一时刻开始算起，在fail_timeout 所设置的时间段内，server是无效的。
+
+        <li>当server的失败次数（peers->peer[i].fails）为最大的失败次数，当间隔现在的时间超过了fail_timeout 所设置的时间段， 则令peers->peer[i].fails =0，使得该server重新有效。
+    </ul></p>
+
+<p> 2.2.2.1假如peers中所有的server都是无效的; 就会尝试往backup的数组中找一个有效的server, 假如找到，跳转到2.2.3; 假如仍然找不到，表示此时upstream中无server可以使用。就会清空所有peers数组中所有的失败次数的记录，使所有server都变成了有效。这样做的目的是为了防止下次再有请求访问时，仍找不到一个有效的server.
+<pre>
+  for (i = 0; i &lt; peers-&gt;number; i++) {
+  peers-&gt;peer[i].fails = 0;
+  }
+</pre>
+</p>
+
+<p> 并返回错误码给nginx, nginx得到此错误码后，就不再向后台server发请求，而是在nginx的错误日志中输出“no live upstreams while connecting to upstream”的记录（这就是no live产生的真正原因），并直接返回给请求的客户端一个502的错误。</p>
+
+<p> 2.2.3 当找到一个有效的server后，令该server的current_weight减一，然后，nginx就会尝试与该server建立连接。假如成功建立连接，跳转到2.2.4; 否则 跳转到2.2..3.1</p>
+
+<p> 2.2..3.1 假如nginx在等待了proxy_connect_timeout所设置的时间段后（如3秒），连接仍然没有建立成功，nginx就在错误日志中输出“upstream timed out (110: Connection timed out) while connecting to upstream”的记录（这就是timed out（连接超时）产生的真正原因）.
+ 2.2.3 .2 接着，让当前server的失败次数加一（peer->fails++; 假如该server最大失败次达到最大失败次数，将在一段时间内该server是无效的），假如当前nginx与后台服务器的尝试次数没有达到upstream中server的总个数，重新跳转到2.2.2, 轮循下一个server, 继续尝试。假如达到最大尝试次数，就表示uptream中所有的server都尝试了一遍，没有server可以提供服务，返回一个504的错误给客户端。</p>
+
+<p> 2.2.4 当nginx与server建立连接成功后，假如server响应请求，把处理结果返回给nginx,</p>
+
+<p> 跳转到2.2.5; 否则跳转到2.2.4.1</p>
+
+<p> 2.2.4.1 假如nginx在等待了proxy_read_timeout所设置的时间段后（如30秒），server仍然没有对nginx发送来的请求作出响应，nginx就在错误日志中输出“upstream timed out (110: Connection timed out)while reading response header from upstream”的记录（这就是timed out（读超时）产生的真正原因）.
+ 2.2.4.2 接着，让当前server的失败次数加一（peer->fails++; 假如该server最大失败次达到最大失败次数，将在一段时间内该server是无效的），假如当前nginx与后台服务器的尝试次数没有达到upstream中server的总个数，重新跳转到2.2.2, 轮循下一个server, 继续尝试。假如达到最大尝试次数，就表示uptream中所有的server都尝试了一遍，没有server可以提供服务，返回一个504的错误给客户端。</p>
+
+<p> 2.2.5 Nginx收到后台server传送过来的结果后，就会返回给客户端一个200的正确结果。这样，nginx作为反向代理的功能也就完成了。</p>
+
+<h3>Ip_hash策略</h3>
+<p></p>
+
+<h4>Ip_hash和RR 的策略有两点不同在于：</h4>
+<p>当一个客户请求到nginx后，</p>
+
+<p>
+    <ul>
+
+        <li>nginx如何选择一个最初的server,
+
+        <li>以及当前选择的server不能提供服务时，如何选择下一个server.
+    </ul></p>
+
+<h4>RR策略回顾</h4>
+<p>从第二部分对RR的先容中，我们知道：
+ 当一个客户请求到达后，RR策略是从upstream的所有server中选择一个当前权重（current_weight）最大的server作为最初的server.
+ upstream的所有server是按照由高到低排序后存储在一个peers数组中，当最初选择的server不能提供服务时，RR策略就会选择peers数组中的下一个元素作为当前server，继续尝试，假如已经达到数组的最大元素，就会从第一个元素再轮循。</p>
+
+<h4>ip_hash策略先容</h4>
+<p>在ip_hash策略中，它选择最初的server的方法是根据请求客户真个IP计算出一个哈希值，再根据哈希值选择后台的服务器。
+ 1）由IP计算哈希值的算法如下，其中公式中hash初始值为89，iphp->addr[i]表示客户真个IP，通过三次哈希计算得出一个IP的哈希值：
+<pre>
+  for (i = 0; i &lt; 3; i++) {
+  hash = (hash * 113 + iphp-&gt;addr[i]) % 6271;
+  }
+</pre>
+</p>
+
+<p> 2）在选择下一个server时，ip_hash的选择策略是这样的：
+ 它在上一次哈希值的基础上，再次哈希，就会得到一个全新的哈希值，再根据哈希值选择另外一个后台的服务器。
+ 哈希算法仍然是
+<pre>
+  for (i = 0; i &lt; 3; i++) {
+  hash = (hash * 113 + iphp-&gt;addr[i]) % 6271;
+  }
+</pre>
+</p>
+
+<p>在这种ip_hash策略，假如一个后台服务器不能提供提服务（连接超时或读超时），该服务器的失败次数就会加一，当一个服务器的失败次数达到max_fails所设置的值，
+就会在fail_timeout所设置的时间段内不能对外提供服务，这点和RR是一致的。</p>
+
+<p> 假如当前server不能提供服务，就会根据当前的哈希值再哈希出一个新哈希值，
+选择另一个服务器继续尝试，尝试的最大次是upstream中server的个数，假如serwin7ver的个数超过20，也就是要最大尝试次数在20次以上，
+当尝试次数达到20次，仍然找不到一个合适的服务器，ip_hah策略不再尝试ip哈希值来选择server, 而在剩余的尝试中，它会转而使用RR的策略，使用轮循的方法，选择新的server。</p>
+
+<p> 3）除了以上部分不同外，IP_hash的其余部分和RR完全一样，由于它的其余部分功能的实现都是通过调用RR中的函数。</p>
+
+<p> 4）IP_</p>

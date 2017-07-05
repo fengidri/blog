@@ -1,0 +1,19 @@
+<p>在正常的编译中没有问题, 但是当使用ycm 进行补全的时间就出现了问题.
+后来发现是由于在 ycm 的选项中, 我加上了 -std=c99.
+这样会要求编译器使用 c99 的特性. 而 libpcap 不在 ISO C99中.</p>
+
+<p>细节上是由于使用了 c99 后会阻止使用 BSD 数据类型.
+以下这些会阻止 BSD 数据类型.
+<pre>
+__STRICT_ANSI__
+_ISOC99_SOURCE
+_POSIX_SOURCE
+_POSIX_C_SOURCE
+_XOPEN_SOURCE
+_SVID_SOURCE
+</pre>
+</p>
+
+<p>参考:</p>
+
+<p>&nbsp;<a href=http://stackoverflow.com/questions/15393905/c-pcap-library-unknown-types-error >C PCAP library unknown types error</a>&nbsp;</p>

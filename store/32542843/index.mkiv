@@ -1,0 +1,620 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Title: ATS - proxy connect
+%Class: ats
+%Post:1
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+
+\section{前言}
+ATS 的代码真的是非常复杂. 看得人受不了.
+本文主要说明 ATS connect to parent 的过程中代码. 可能与一些别的代码相关, 简单略过,
+一些细节我可能也还不确定. ATS 本身是多进程的, 并且有其对应的调度系统, 同时所有的代码都是
+使用 Continuation 的思想进行编写的, 所以就非常地复杂.
+
+
+\section{net event}
+所有的网络服务器对于网络的处理都是网络事件驱动的, 这样的效率才会比较高.
+我们先说一下, 这一块的实现.
+\starttyping
+int
+NetHandler::mainNetEvent(int event, Event *e)
+{
+  ...
+  // 看到这个了吗? 终于让我在一堆的代码里找到了这个东西.
+  pd->result = epoll_wait(pd->epoll_fd, pd->ePoll_Triggered_Events, POLL_DESCRIPTOR_SIZE, poll_timeout);
+  ...
+
+  // 对于网络事件进行分类, 这个样的处理方式在别的网络程序里不常见.
+  for (int x = 0; x < pd->result; x++) {
+    epd = (EventIO*) get_ev_data(pd,x);
+    if (epd->type == EVENTIO_READWRITE_VC) {
+      vc = epd->data.vc;
+      if (get_ev_events(pd,x) & (EVENTIO_READ|EVENTIO_ERROR)) {
+        vc->read.triggered = 1;
+        if (!read_ready_list.in(vc))// 插入到队列 read_ready_list 中
+          read_ready_list.enqueue(vc);
+        else if (get_ev_events(pd,x) & EVENTIO_ERROR) {
+          // check for unhandled epoll events that should be handled
+          Debug("iocore_net_main", "Unhandled epoll event on read: 0x%04x read.enabled=%d closed=%d read.netready_queue=%d",
+                get_ev_events(pd,x), vc->read.enabled, vc->closed, read_ready_list.in(vc));
+        }
+      }
+      vc = epd->data.vc;
+      if (get_ev_events(pd,x) & (EVENTIO_WRITE|EVENTIO_ERROR)) {
+        vc->write.triggered = 1;
+        if (!write_ready_list.in(vc)) // 同样插入到队列 write_ready_list 中
+          write_ready_list.enqueue(vc);
+        else if (get_ev_events(pd,x) & EVENTIO_ERROR) {
+          // check for unhandled epoll events that should be handled
+          Debug("iocore_net_main",
+                "Unhandled epoll event on write: 0x%04x write.enabled=%d closed=%d write.netready_queue=%d",
+                get_ev_events(pd,x), vc->write.enabled, vc->closed, write_ready_list.in(vc));
+        }
+      } else if (!get_ev_events(pd,x) & EVENTIO_ERROR) {
+        Debug("iocore_net_main", "Unhandled epoll event: 0x%04x", get_ev_events(pd,x));
+      }
+    } else if (epd->type == EVENTIO_DNS_CONNECTION) {
+      if (epd->data.dnscon != NULL) {
+        epd->data.dnscon->trigger(); // Make sure the DNSHandler for this con knows we triggered
+#if defined(USE_EDGE_TRIGGER)
+        epd->refresh(EVENTIO_READ);
+#endif
+      }
+    } else if (epd->type == EVENTIO_ASYNC_SIGNAL)
+      net_signal_hook_callback(trigger_event->ethread);
+    ev_next_event(pd,x);
+  }
+
+  pd->result = 0;
+
+ ....
+ // UnixNetVConnection *
+  while ((vc = read_ready_list.dequeue())) {
+    if (vc->closed)
+      close_UnixNetVConnection(vc, trigger_event->ethread);
+    else if (vc->read.enabled && vc->read.triggered)
+      vc->net_read_io(this, trigger_event->ethread); // 对 read ready 的事件进行处理
+    else if (!vc->read.enabled) {
+      read_ready_list.remove(vc);
+    }
+  }
+  while ((vc = write_ready_list.dequeue())) {
+    if (vc->closed)
+      close_UnixNetVConnection(vc, trigger_event->ethread);
+    else if (vc->write.enabled && vc->write.triggered)
+      write_to_net(this, vc, trigger_event->ethread); // 对于 write ready 的事件进行处理
+    else if (!vc->write.enabled) {
+      write_ready_list.remove(vc);
+    }
+  }
+  ....
+}
+\stoptyping
+
+如下是发送请求到 upstearm 的一断栈, 对于事件的处理并不同于我们的传统的回调方式,
+而是直接对于 UnixNetVConnection 进行处理, 这个 connection 与上层的 connection 连接,
+所以使用共通的接口把上层的数据写入到的网络中, 或者从网络中读取数据.
+connection 就是给数据的传递提供了一个统一的接口, 并且可以多个 connection 进行连接.
+
+\starttyping
+#0  HttpSM::state_send_server_request_header (this=0x2afa5fd00000, event=103,
+    data=0x2afa5fa60170) at HttpSM.cc:1915
+#1  0x000000000053f768 in HttpSM::main_handler (this=0x2afa5fd00000,
+    event=103, data=0x2afa5fa60170) at HttpSM.cc:2532
+#2  0x00000000006c0a13 in Continuation::handleEvent (data=0x2afa5fa60170,
+    event=103, this=<optimized out>)
+    at ../../iocore/eventsystem/I_Continuation.h:146
+#3  write_signal_and_update (vc=0x2afa5fa60000, event=103)
+    at UnixNetVConnection.cc:153
+#4  write_signal_done (vc=0x2afa5fa60000, nh=0x2afa568f6c90, event=103)
+    at UnixNetVConnection.cc:180
+#5  write_to_net_io (nh=nh@entry=0x2afa568f6c90, vc=0x2afa5fa60000,
+    thread=<optimized out>) at UnixNetVConnection.cc:491
+#6  0x00000000006c10c9 in write_to_net (nh=nh@entry=0x2afa568f6c90,
+    vc=<optimized out>, thread=<optimized out>) at UnixNetVConnection.cc:351
+#7  0x00000000006b26b9 in NetHandler::mainNetEvent (this=0x2afa568f6c90,
+    event=<optimized out>, e=<optimized out>) at UnixNet.cc:400
+#8  0x00000000006e9c4a in Continuation::handleEvent (data=0x2afa53153cc0,
+    event=5, this=<optimized out>) at I_Continuation.h:146
+#9  EThread::process_event (calling_code=5, e=0x2afa53153cc0,
+    this=0x2afa568f3010) at UnixEThread.cc:145
+#10 EThread::execute (this=0x2afa568f3010) at UnixEThread.cc:269
+#11 0x00000000006e8765 in spawn_thread_internal (a=0x15ae3a0) at Thread.cc:88
+#12 0x00002afa54f324a4 in start_thread () from /usr/lib/libpthread.so.0
+#13 0x00002afa5603013d in clone () from /usr/lib/libc.so.6
+\stoptyping
+
+
+ATS 中通过 NetHandler::mainNetEvent 对于网络事件进行处理, 这与一般的网络服务是一样的,
+但是在事件的详细处理上, 是针对于 connection 的, 所以相较而言有一个更加统一的接口.
+而不论接口的另一端是什么.
+
+注意一个细节, 一般的网络事件驱动的写法, 一般都在这里同时完成定时器的处理. 但是 ATS 没有, 这个后面要讲到.
+
+\section{HttpSM}
+简单说明了一下 ATS 特色的网络事件驱动, 我们回来上层的 HTTP 驱动上来.
+
+我们从 HttpSM::set_next_state 说起, 看这个函数, 可以发现, 这个函数是事件驱动的可复入的函数.
+不同的事件就是 HTTP 处理流程中的一个阶段, 这也是 connection 的函数的一个特色.
+我们这里关注于连接到parent 的过程.
+所以只看如下的代码:
+\starttyping
+  case HttpTransact::ORIGIN_SERVER_OPEN:
+    {
+      ...
+
+      // 设置 default_handle. *这是很重要的一步*.
+      HTTP_SM_SET_DEFAULT_HANDLER(&HttpSM::state_http_server_open);
+
+      // 如果当前的处理是重试的, 那么删除前一次的信息
+      if (server_entry) {
+        ink_assert(server_entry->vc_type == HTTP_SERVER_VC);
+        vc_table.cleanup_entry(server_entry);
+        server_entry = NULL;
+        server_session = NULL;
+      } else {
+        // 如果没有body, 就把 inactivity 删除
+        if (ua_session && !t_state.hdr_info.request_content_length) {
+          ua_session->get_netvc()->cancel_inactivity_timeout();
+        }
+      }
+
+      do_http_server_open();
+      break;
+    }
+\stoptyping
+
+
+\starttyping
+void
+HttpSM::do_http_server_open(bool raw)
+{
+  int ip_family = t_state.current.server->addr.sa.sa_family;
+
+
+  char addrbuf[INET6_ADDRPORTSTRLEN];
+
+  milestones.server_connect = ink_get_hrtime(); // 记录当前时间
+  if (milestones.server_first_connect == 0) { // 记录第一次尝试连接的时间
+    milestones.server_first_connect = milestones.server_connect;
+  }
+
+    ..... // 对于连接的一些复用之类的检查性的操作
+
+  if (t_state.scheme == URL_WKSIDX_HTTPS) {
+    .....
+  } else {
+    if (t_state.method != HTTP_WKSIDX_CONNECT) {
+      DebugSM("http", "calling netProcessor.connect_re");
+      // 这里连接到后端了,进入到的网络连接一层.
+      connect_action_handle = netProcessor.connect_re(this,     // state machine
+                                                      &t_state.current.server->addr.sa,    // addr + port
+                                                      &opt);
+    } else {
+     ....
+  }
+}
+\stoptyping
+
+我们关注的是 proxy connect 这个过程中有一些上层的处理如重试, 超时等, 但是最为重要的绝对是
+ socket 的创建与 connect 函数的调用. 而 do_http_server_open 就是这个过程的入口. 关系如下:
+\starttyping
+HttpSM::do_http_server_open
+  |
+  | --- NetProcessor::connect_re
+        |
+        | --- UnixNetProcessor::connect_re_internal
+               |
+               | --- UnixNetVConnection::connectUp
+                         |
+                         | --- Connection::open
+                         |
+                         | --- ep.start
+                         |
+                         | --- Connection::connect
+                         |
+                         | >>> HttpSM::state_http_server_open(NET_EVENT_OPEN, this)
+\stoptyping
+
+暂时不关注到 Connection::open 之前的函数, 我们的重点是 Connection::open 函数.
+这个, 这个函数的调用 open, connect 打开 socket 并连接, 这里的连接当然是 noblocking.
+完成之后, 立即通过 Connection 的方法调用 handleEvent 处理 NET_EVENT_OPEN, 如果
+失败处理的事件就 NET_EVENT_OPEN_FAILED.
+对于事件的处理 handleEvent 会调用 handler 进行处理, 而我们已经在前面已经通过如下代码把设置了 HttpSM
+的 default_handle.
+\starttyping
+      HTTP_SM_SET_DEFAULT_HANDLER(&HttpSM::state_http_server_open);
+\stoptyping
+
+这个调用关系在 UnixNetVConnection::connectUp 的过程如下
+\starttyping
+UnixNetVConnection::connectUp
+   |
+   | --- Continuation::handleEven
+           |
+           | --- HttpSM::main_handle
+                  |
+                  | ---  HttpSM::state_http_server_open
+\stoptyping
+
+
+所以我们现在又回到了 HttpSM 层面的 HttpSM::state_http_server_open.
+\starttyping
+int
+HttpSM::state_http_server_open(int event, void *data)
+{
+  DebugSM("http_track", "entered inside state_http_server_open");
+  STATE_ENTER(&HttpSM::state_http_server_open, event);
+  // TODO decide whether to uncomment after finish testing redirect
+  // ink_assert(server_entry == NULL);
+  pending_action = NULL;
+  milestones.server_connect_end = ink_get_hrtime();
+  HttpServerSession *session;
+
+  switch (event) {
+  case NET_EVENT_OPEN: // 调用 connect 之后立即调用, 注意 connect 可能还没有成功
+    ....
+
+    ats_ip_copy(&session->server_ip, &t_state.current.server->addr);
+    session->new_connection((NetVConnection *) data);
+    ats_ip_port_cast(&session->server_ip) = htons(t_state.current.server->port);
+    session->state = HSS_ACTIVE;
+
+    attach_server_session(session); //  比较重要的处理
+    if (t_state.current.request_to == HttpTransact::PARENT_PROXY) {
+      session->to_parent_proxy = true;
+      HTTP_INCREMENT_DYN_STAT(http_current_parent_proxy_connections_stat);
+      HTTP_INCREMENT_DYN_STAT(http_total_parent_proxy_connections_stat);
+
+    } else {
+      session->to_parent_proxy = false;
+    }
+    handle_http_server_open(); // 这个里面会调用 setup_server_send_request_api. 实现对于插件 send request 的事件的调用
+    return 0;
+  case EVENT_INTERVAL:
+    do_http_server_open(); // 重新调用
+    break;
+  case VC_EVENT_ERROR:
+  case NET_EVENT_OPEN_FAILED: // 失败处理
+         ......
+  case CONGESTION_EVENT_CONGESTED_ON_F:
+         ......
+  case CONGESTION_EVENT_CONGESTED_ON_M:
+         ......
+
+  default:
+    Error("[HttpSM::state_http_server_open] Unknown event: %d", event);
+    ink_release_assert(0);
+    return 0;
+  }
+
+  return 0;
+}
+\stoptyping
+
+HttpSM::attach_server_session 是一个比较重要的函数, 与我们关心的 proxy connect 的一些属性与行为
+    密切相关.
+
+
+\starttyping
+void HttpSM::attach_server_session(HttpServerSession * s)
+{
+  server_session->transact_count++;  // 统计连接次数
+
+  // Record the VC in our table
+  server_entry = vc_table.new_entry(); // 新建一个 server_entry
+  server_entry->vc = server_session;
+  server_entry->vc_type = HTTP_SERVER_VC;
+  server_entry->vc_handler = &HttpSM::state_send_server_request_header;
+
+  // Initiate a read on the session so that the SM and not
+  //  session manager will get called back if the timeout occurs
+  //  or the server closes on us.  The IO Core now requires us to
+  //  do the read with a buffer and a size so preallocate the
+  //  buffer
+  server_buffer_reader = server_session->get_reader();
+  server_entry->read_vio = server_session->do_io_read(this, INT64_MAX, server_session->read_buffer);
+
+  // This call cannot be canceled or disabled on Windows at a different
+  // time (callstack). After this function, all transactions will send
+  // a request to the origin server. It is possible that read events
+  // for the response come in before the write events for sending the
+  // request itself. In state_send_server_request(), we try to disable
+  // reading until writing the request completed. That turned out to be
+  // for the second do_io_read(), the way to reenable() reading once
+  // disabled, but still the result of this do_io_read came in. For this
+  // read holds: server_entry->read_vio == INT64_MAX
+  // This block of read events gets undone in setup_server_read_response()
+
+  // Transfer control of the write side as well
+  server_session->do_io_write(this, 0, NULL);
+
+  // ** 注意 ** 这里的 connect_timeout 与我们一般理解的不同.
+  // 它是收到响应的时间. 也就是我们一般的所说的 read timeout
+  MgmtInt connect_timeout;
+
+  // 这个值还有好几个. -_-
+  if (t_state.method == HTTP_WKSIDX_POST || t_state.method == HTTP_WKSIDX_PUT) {
+    connect_timeout = t_state.txn_conf->post_connect_attempts_timeout;
+  } else if (t_state.current.server == &t_state.parent_info) {
+    connect_timeout = t_state.http_config_param->parent_connect_timeout;
+  } else {
+    connect_timeout = t_state.txn_conf->connect_attempts_timeout;
+  }
+  if (t_state.pCongestionEntry != NULL)
+    connect_timeout = t_state.pCongestionEntry->connect_timeout();
+
+  // 设置超时, 这就是一个bug
+  if (t_state.api_txn_connect_timeout_value != -1) { // 插件里有设置
+    server_session->get_netvc()->set_inactivity_timeout(HRTIME_MSECONDS(t_state.api_txn_connect_timeout_value));
+  } else {
+    server_session->get_netvc()->set_inactivity_timeout(HRTIME_SECONDS(connect_timeout));
+  }
+
+  // 来看看这个, 设置个整个请求的存在时候.
+  if (t_state.api_txn_active_timeout_value != -1) { // 插件里有设置
+    server_session->get_netvc()->set_active_timeout(HRTIME_MSECONDS(t_state.api_txn_active_timeout_value));
+  } else {
+    server_session->get_netvc()->set_active_timeout(HRTIME_SECONDS(t_state.txn_conf->transaction_active_timeout_out));
+  }
+}
+\stoptyping
+
+对于这里的超时只是说明一下, 后面我们的还要重点说明一下 ATS 的超时机制.
+
+到这里为止, 我们的还是只 connect 了, 但是 connect 是有可能失败的. 我们正在等待
+socket 的 write event.
+前面已经说了, write event 由 网络事件驱动. 网络事件驱动在完成的时候, 会
+使用 connection 模型的接口进行通知. 那么们 HttpSM 层面的 对应的 connection 在哪里呢,
+处理的 state 又是哪一个呢?
+就是上面的这断代码里的这一断, 我们再拿出来重点说一下.
+\starttyping
+  // Record the VC in our table
+  server_entry = vc_table.new_entry(); // 新建一个 server_entry
+  server_entry->vc = server_session;  // VC
+  server_entry->vc_type = HTTP_SERVER_VC; // 设置
+  server_entry->vc_handler = &HttpSM::state_send_server_request_header; // 设置对应的 state 函数
+\stoptyping
+
+state 函数正是 send server rqeuest. 这个函数正在等待 socket 的 write event, 完成对于请求头的发送.
+但是慢着, 我们这个设置是在完成了 socket 网络接口的调用之后才设置的, 那么 epoll
+之后对于网络事件进行处理的时候是如何得到这个 vc 的呢?
+
+这里的 HttpSM 本身就是一个 connection, 在调用 NetProcessor::connect_re 实现底层的连接的时候,
+把 HttpSM 这个 connection 传递给了底层, 当出现 write/read 事件的时候,
+操作的 connection 会传递到 HttpSM. 而在HttpSM::attach_server_session 里设置了 server_entry,
+HttpSM 会从这里调用到上层的数据, 实现 请求的写入与响应的读取.
+
+到这里, 我们就理解了, 从调用开始到 connect, 再到 write event 触发请求头的写入的过程.
+
+一个解决的过程, 但是在 ATS 的这个框架下面, 实际上还有一些细节没有理解清楚.
+本文只针对于这个过程进行分析, 一些其它的行为如响应的读取, 不会涉及.
+
+
+\section{超时}
+连接的过程中我们一般有两个定时器:
+\startitemize
+\item connect timeout / write timeout
+\item read timeout
+\stopitemize
+
+但是 ATS 的配置让人无语了. 分别是如下的配置项:
+\startitemize
+\item proxy.config.http.parent_proxy.connect_attempts_timeout INT 30
+\item proxy.config.http.connect_attempts_timeout INT 30
+\item proxy.config.http.post_connect_attempts_timeout INT 1800
+
+\item proxy.config.http.transaction_no_activity_timeout_out INT 30 // TODO
+\item proxy.config.http.transaction_active_timeout_out INT 0
+\stopitemize
+前面的三个用于不同的场景, 前面已经介绍过了, 其实上是 read timeout.(bug)
+transaction_active_timeout_out 是实际是整个请求所用的时候, 真是不知道, 这个选项有什么作用.
+
+不论上层是如何理解的, 实际上对于netvc 的设置只有两个接口,
+set_inactivity_timeout/ set_active_timeout.
+
+\starttyping
+TS_INLINE void UnixNetVConnection::set_inactivity_timeout(ink_hrtime timeout)
+{
+  inactivity_timeout_in = timeout;
+#ifndef INACTIVITY_TIMEOUT
+  next_inactivity_timeout_at = ink_get_hrtime() + timeout;
+#else
+  if (inactivity_timeout)
+    inactivity_timeout->cancel_action(this);
+  if (inactivity_timeout_in) {
+    if (read.enabled) {
+      ink_assert(read.vio.mutex->thread_holding == this_ethread() && thread);
+      if (read.vio.mutex->thread_holding == thread)
+        inactivity_timeout = thread->schedule_in_local(this, inactivity_timeout_in);
+      else
+        inactivity_timeout = thread->schedule_in(this, inactivity_timeout_in);
+    } else if (write.enabled) {
+      ink_assert(write.vio.mutex->thread_holding == this_ethread() && thread);
+      if (write.vio.mutex->thread_holding == thread)
+        inactivity_timeout = thread->schedule_in_local(this, inactivity_timeout_in);
+      else
+        inactivity_timeout = thread->schedule_in(this, inactivity_timeout_in);
+    } else
+      inactivity_timeout = 0;
+  } else
+    inactivity_timeout = 0;
+#endif
+}
+
+TS_INLINE void UnixNetVConnection::set_active_timeout(ink_hrtime timeout)
+{
+  active_timeout_in = timeout;
+  if (active_timeout)
+    active_timeout->cancel_action(this);
+  if (active_timeout_in) {
+    if (read.enabled) {
+      ink_assert(read.vio.mutex->thread_holding == this_ethread() && thread);
+      if (read.vio.mutex->thread_holding == thread)
+        active_timeout = thread->schedule_in_local(this, active_timeout_in);
+      else
+        active_timeout = thread->schedule_in(this, active_timeout_in);
+    } else if (write.enabled) {
+      ink_assert(write.vio.mutex->thread_holding == this_ethread() && thread);
+      if (write.vio.mutex->thread_holding == thread)
+        active_timeout = thread->schedule_in_local(this, active_timeout_in);
+      else
+        active_timeout = thread->schedule_in(this, active_timeout_in);
+    } else
+      active_timeout = 0;
+  } else
+    active_timeout = 0;
+}
+\stoptyping
+
+从如上的代码可以看出来, 对于超时, ATS 使用的线程调度来实现. 但是对于 INACTIVITY 还有另一种实现.
+我们这里先跳过, 只分析线程调度的实现.  如果我们不关心线程调度是如何实现的, 我们只关心
+在时间到了之后, 是如何实现回调的.
+
+处理的思路依然是 connnection 模型, 在设置 connnetUp 已经设置了 UnixNetVConnnection handler 为 mainEvent.
+所以会在时间到了之后调用 mainEvent 处理 active / inactivity timeout.
+
+从目前的代码来看, 看不出 active / inactivity  的区别是如何实现的.
+当上报到 HttpSM::state_send_server_request_header 处理方法都是一样的, 调用的都是
+handle_server_setup_error 处理的.
+所以这两个定时器的处理关键是查看是什么情况下取消的.
+
+而实际上这里是 ATS 的bug. 就不多说了.
+
+
+\section{重试}
+在 connect 失败的情况下在 HttpSM::state_http_server_open 会调用如下的函数.
+\starttyping
+      call_transact_and_set_next_state(HttpTransact::HandleResponse);
+\stoptyping
+还记得前面说过 HttpSM::do_http_server_open 是在 HttpSM::set_next_state 下面调用到的.
+而call_transact_and_set_next_state 会先执行 参数的函数, 再调用HttpSM::set_next_state.
+如果 参数函数不做任何修改的情况下, 又会执行到的 HttpSM::do_http_server_open
+实现重试.
+
+在知道的函数的调用关系之后, 我们关心的是对于源地址的选择, 还有重试次数等信息的控制.
+
+\starttyping
+void
+HttpTransact::handle_response_from_parent(State* s)
+{
+  DebugTxn("http_trans", "[handle_response_from_parent] (hrfp)");
+  HTTP_RELEASE_ASSERT(s->current.server == &s->parent_info);
+
+  s->parent_info.state = s->current.state;
+  switch (s->current.state) {
+  case CONNECTION_ALIVE:
+    DebugTxn("http_trans", "[hrfp] connection alive");
+    s->current.server->connect_result = 0;
+    SET_VIA_STRING(VIA_DETAIL_PP_CONNECT, VIA_DETAIL_PP_SUCCESS);
+    if (s->parent_result.retry) {
+      s->parent_params->recordRetrySuccess(&s->parent_result);
+    }
+    handle_forward_server_connection_open(s);
+    break;
+  default:
+    {
+      LookingUp_t next_lookup = UNDEFINED_LOOKUP;
+      DebugTxn("http_trans", "[hrfp] connection not alive");
+      SET_VIA_STRING(VIA_DETAIL_PP_CONNECT, VIA_DETAIL_PP_FAILURE);
+
+      ink_assert(s->hdr_info.server_request.valid());
+
+      s->current.server->connect_result = ENOTCONN;
+
+      char addrbuf[INET6_ADDRSTRLEN];
+      DebugTxn("http_trans", "[%d] failed to connect to parent %s", s->current.attempts,
+            ats_ip_ntop(&s->current.server->addr.sa, addrbuf, sizeof(addrbuf)));
+
+      // If the request is not retryable, just give up!
+      if (!is_request_retryable(s)) {
+        s->parent_params->markParentDown(&s->parent_result);
+        s->parent_result.r = PARENT_FAIL;
+        handle_parent_died(s);
+        return;
+      }
+
+      if (s->current.attempts < s->http_config_param->parent_connect_attempts) {
+        s->current.attempts++;
+
+        // Are we done with this particular parent?
+        if ((s->current.attempts - 1) % s->http_config_param->per_parent_connect_attempts != 0) {
+          // No we are not done with this parent so retry
+          s->next_action = how_to_open_connection(s);
+          DebugTxn("http_trans", "%s Retrying parent for attempt %d, max %" PRId64,
+                "[handle_response_from_parent]", s->current.attempts, s->http_config_param->per_parent_connect_attempts);
+          return;
+        } else {
+          DebugTxn("http_trans", "%s %d per parent attempts exhausted",
+                "[handle_response_from_parent]", s->current.attempts);
+
+          // Only mark the parent down if we failed to connect
+          //  to the parent otherwise slow origin servers cause
+          //  us to mark the parent down
+          if (s->current.state == CONNECTION_ERROR) {
+            s->parent_params->markParentDown(&s->parent_result);
+          }
+          // We are done so look for another parent if any
+          next_lookup = find_server_and_update_current_info(s);
+        }
+      } else {
+        // Done trying parents... fail over to origin server if that is
+        //   appropriate
+        DebugTxn("http_trans", "[handle_response_from_parent] Error. No more retries.");
+        s->parent_params->markParentDown(&s->parent_result);
+        s->parent_result.r = PARENT_FAIL;
+        next_lookup = find_server_and_update_current_info(s);
+      }
+
+      // We have either tried to find a new parent or failed over to the
+      //   origin server
+      switch (next_lookup) {
+      case PARENT_PROXY:
+        ink_assert(s->current.request_to == PARENT_PROXY);
+        TRANSACT_RETURN(DNS_LOOKUP, PPDNSLookup);
+        break;
+      case ORIGIN_SERVER:
+        s->current.attempts = 0;
+        s->next_action = how_to_open_connection(s);
+        if (s->current.server == &s->server_info && s->next_hop_scheme == URL_WKSIDX_HTTP) {
+          HttpTransactHeaders::remove_host_name_from_url(&s->hdr_info.server_request);
+        }
+        break;
+      case HOST_NONE:
+        handle_parent_died(s);
+        break;
+      default:
+        // This handles:
+        // UNDEFINED_LOOKUP, ICP_SUGGESTED_HOST,
+        // INCOMING_ROUTER
+        break;
+      }
+
+      break;
+    }
+  }
+}
+\stoptyping
+
+
+
+
+未完.....
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

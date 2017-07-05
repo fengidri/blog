@@ -1,0 +1,71 @@
+%title: gdb watch
+\section{watch}
+\starttyping
+watch [-l|-location] expr [thread threadnum] [mask maskvalue]
+\stoptyping
+-l 与 mask没有仔细研究，thread threadnum 是在多线程的程序中限定只有被线程号是threadnum的线程修改值后进入断点。
+
+经常用到的如下命令：
+\starttyping
+watch <expr>
+\stoptyping
+为表达式（变量）expr设置一个观察点。变量量表达式值有变化时，马上停住程序。
+
+表达式可以是一个变量
+\starttyping
+例如：watch value_a
+\stoptyping
+
+表达式可以是一个地址：
+\starttyping
+例如：watch *(int *)0x12345678 可以检测4个字节的内存是否变化。
+\stoptyping
+
+表达式可以是一个复杂的语句表达式：
+\starttyping
+例如：watch a*b + c/d
+\stoptyping
+
+    watch 在有些操作系统支持硬件观测点，硬件观测点的运行速度比软件观测点的快。如果系统支持硬件观测的话，当设置观测点是会打印如下信息：
+Hardware watchpoint num: expr
+如果不想用硬件观测点的话可如下设置：
+set can-use-hw-watchpoints
+
+watch两个变种 rwatch，awatch，这两个命令只支持硬件观测点如果系统不支持硬件观测点会答应出不支持这两个命令的信息:，
+
+\starttyping
+rwatch <expr>
+\stoptyping
+当表达式（变量）expr被读时，停住程序。
+
+\starttyping
+awatch <expr>
+\stoptyping
+当表达式（变量）的值被读或被写时，停住程序。
+
+\starttyping
+info watchpoints
+\stoptyping
+    列出当前所设置了的所有观察点。
+
+watch 所设置的断点也可以用控制断点的命令来控制。如 disable、enable、delete等。 
+
+可以为停止点设定运行命令
+\starttyping
+
+commands [bnum]
+... command-list ...
+end
+\stoptyping
+为断点号bnum指写一个命令列表。当程序被该断点停住时，gdb会依次运行命令列表中的命令。
+例如：
+\starttyping
+break foo if x>0
+commands
+printf "x is %d/n",x
+continue
+end
+\stoptyping
+断点设置在函数foo中，断点条件是x>0，如果程序被断住后，也就是，一旦x的值在foo函数中大于0，GDB会自动打印出x的值，并继续运行程序。 
+注意：watch 设置也是断点，如果调试的时候设置的断点（任何种类的断点）过多的时候，watch断点会被忽略，有时候没有任何提示，
+这是我在测试的时候发现的，只有把多余的断点删除后才可用。

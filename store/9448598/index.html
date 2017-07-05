@@ -1,0 +1,126 @@
+<p>这部分的函数入口是ngx_http_upstream_send_response，
+这里有一个很重要的标记，那就是u->buffering，
+这个标记的含义就是nginx是否会尽可能多的读取upstream的数据。
+如果关闭，则就是一个同步的发送，也就是接收多少，发送给客户端多少。
+默认这个是打开的。也就是nginx会buf住upstream发送的数据。</p>
+
+<p>不管buffering是否打开，后端发送的头都不会被buffer，首先会发送header，
+然后才是body的发送，而body的发送就需要区分buffering选项了。</p>
+
+<p>ngx_http_upstream_send_response 代码一开始就是对于头部的发送.</p>
+
+<p>对关闭了buffering的情况, 开始先检查input_filter, 如果没有就设置成
+默认的.</p>
+
+<p>之后设置read/write 回调函数.</p>
+
+<p>查看目前buffer 中的数据大小. 如果有数据就开始发送到down stream.
+如果没有数据, 并且当前的流是可读的, 那么就执行read 操作.</p>
+
+<h3>upstream模块接口</h3>
+<p>从本质上说，upstream属于handler，只是他不产生自己的内容，而是通过请求后端服务器得到内容，所以才称为upstream（上游）。请求并取得响应内容的整个过程已经被封装到nginx内部，所以upstream模块只需要开发若干回调函数，完成构造请求和解析响应等具体的工作。</p>
+
+<p>这些回调函数如下表所示：</p>
+
+<p><table>
+<tr><td>create_request </td><td>	生成发送到后端服务器的请求缓冲（缓冲链），在初始化upstream 时使用。</td></tr>
+<tr><td>reinit_request	</td><td>在某台后端服务器出错的情况，nginx会尝试另一台后端服务器。 nginx选定新的服务器以后，会先调用此函数，以重新初始化 upstream模块的工作状态，然后再次进行upstream连接。</td></tr>
+<tr><td>process_header	</td><td>处理后端服务器返回的信息头部。所谓头部是与upstream server 通信的协议规定的，比如HTTP协议的header部分，或者memcached 协议的响应状态部分。</td></tr>
+<tr><td>abort_request	</td><td>在客户端放弃请求时被调用。不需要在函数中实现关闭后端服务 器连接的功能，系统会自动完成关闭连接的步骤，所以一般此函 数不会进行任何具体工作。</td></tr>
+<tr><td>finalize_request</td><td>	正常完成与后端服务器的请求后调用该函数，与abort_request 相同，一般也不会进行任何具体工作。</td></tr>
+<tr><td>input_filter	</td><td>处理后端服务器返回的响应正文。nginx默认的input_filter会 将收到的内容封装成为缓冲区链ngx_chain。该链由upstream的 out_bufs指针域定位，所以开发人员可以在模块以外通过该指针 得到后端服务器返回的正文数据。memcached模块实现了自己的 input_filter，在后面会具体分析这个模块。</td></tr>
+<tr><td>input_filter_init	</td><td>初始化input filter的上下文。nginx默认的input_filter_init 直接返回。</td></tr>
+</table>
+</p>
+
+<h3>Upstream模块的流程</h3>
+<p>那么，upstream模块的特别之处在于模块处理函数的实现中。
+upstream模块的处理函数进行的操作都包含一个固定的流程。
+在memcached的例子中，可以观察ngx_http_memcached_handler的代码，可以发现，这个固定的操作流程是：</p>
+
+<p>
+    <ul>
+
+        <li>创建upstream数据结构。
+<pre>
+if (ngx_http_upstream_create(r) != NGX_OK) {
+    return NGX_HTTP_INTERNAL_SERVER_ERROR;
+}
+</pre>
+</p>
+
+<p>
+        <li>设置模块的tag和schema。schema现在只会用于日志，tag会用于buf_chain管理。
+<pre>
+u = r-&gt;upstream;
+ngx_str_set(&amp;u-&gt;schema, "memcached://");
+u-&gt;output.tag = (ngx_buf_tag_t) &amp;ngx_http_memcached_module;
+</pre>
+</p>
+
+<p>
+        <li>设置upstream的后端服务器列表数据结构。
+<pre>
+mlcf = ngx_http_get_module_loc_conf(r, ngx_http_memcached_module);
+u-&gt;conf = &amp;mlcf-&gt;upstream;
+</pre>
+</p>
+
+<p>
+        <li>设置upstream回调函数。在这里列出的代码稍稍调整了代码顺序。
+<pre>
+u-&gt;create_request = ngx_http_memcached_create_request;
+u-&gt;reinit_request = ngx_http_memcached_reinit_request;
+u-&gt;process_header = ngx_http_memcached_process_header;
+u-&gt;abort_request = ngx_http_memcached_abort_request;
+u-&gt;finalize_request = ngx_http_memcached_finalize_request;
+u-&gt;input_filter_init = ngx_http_memcached_filter_init;
+u-&gt;input_filter = ngx_http_memcached_filter;
+</pre>
+</p>
+
+<p>
+        <li>创建并设置upstream环境数据结构。
+<pre>
+ctx = ngx_palloc(r-&gt;pool, sizeof(ngx_http_memcached_ctx_t));
+if (ctx == NULL) {
+    return NGX_HTTP_INTERNAL_SERVER_ERROR;
+}
+
+ctx-&gt;rest = NGX_HTTP_MEMCACHED_END;
+ctx-&gt;request = r;
+
+ngx_http_set_ctx(r, ctx, ngx_http_memcached_module);
+
+u-&gt;input_filter_ctx = ctx;
+</pre>
+</p>
+
+<p>
+        <li>完成upstream初始化并进行收尾工作。
+<pre>
+r-&gt;main-&gt;count++;
+ngx_http_upstream_init(r);
+return NGX_DONE;
+</pre>
+
+    </ul>
+将count加1，然后返回NGX_DONE。nginx遇到这种情况，虽然会认为当前请求的处理已经结束，但是不会释放请求使用的内存资源，也不会关闭与客户端的连接。之所以需要这样，是因为nginx建立了upstream请求和客户端请求之间一对一的关系，在后续使用ngx_event_pipe将upstream响应发送回客户端时，还要使用到这些保存着客户端信息的数据结构。这部分会在后面的原理篇做具体介绍，这里不再展开。</p>
+
+<p>将upstream请求和客户端请求进行一对一绑定，这个设计有优势也有缺陷。优势就是简化模块开发，可以将精力集中在模块逻辑上，而缺陷同样明显，一对一的设计很多时候都不能满足复杂逻辑的需要。对于这一点，将会在后面的原理篇来阐述。</p>
+
+<h3>upstream 回调</h3>
+<p>以memcache为例
+
+    <ul>
+
+        <li>ngx_http_memcached_create_request：很简单的按照设置的内容生成一个key，接着生成一个“get $key”的请求，放在r->upstream->request_bufs里面。
+
+        <li>ngx_http_memcached_reinit_request：无需初始化。
+
+        <li>ngx_http_memcached_abort_request：无需额外操作。
+
+        <li>ngx_http_memcached_finalize_request：无需额外操作。
+
+        <li>ngx_http_memcached_process_header：模块的业务重点函数。memcache协议的头部信息被定义为第一行文本，可以找到这段代码证明：
+    </ul></p>

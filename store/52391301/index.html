@@ -1,0 +1,82 @@
+<p></p>
+
+<h3>EFI</h3>
+<p>这次想在 mac 下安装 linux. 又搞了一些东西. linux 想用于工作中还是比较困难的.
+但是又感受了很多技术. 简单纪录一下.</p>
+
+<p>在 mac 下安装 linux 第一个问题就是引导的问题, 磁盘的划分还在其次.
+mac 下使用的 EFI 引导的. 其实我之前就知道这个东西, 但是由于比较麻烦一直
+也没有去好好研究一下. 这一次算是被逼的了.</p>
+
+<p>引用一下 EFI 的介绍吧:
+<pre>
+可扩展固件接口（EFI）最初是由英特尔开发，于2002年12月英特尔释出其订定的版本——1.1版
+之后英特尔不再有其他关于EFI的规范格式发布。
+有关EFI的规范，英特尔已于2005年将此规范格式交由UEFI论坛来推广与发展，
+后来并更改名称为Unified EFI（UEFI）。UEFI论坛于2007年1月7日释出并发放2.1版本的规格，
+其中较1.1版本增加与改进了加密编码（cryptography）、网络认证（network authentication）
+与用户接口架构（User Interface Architecture）。
+</pre>
+</p>
+
+<p>说点实际的, 一般 EFI 会有一个 100M 的 fat 的分区(EFI System Partition)
+用于保存一些数据. 这些东西可以启动运行, 一定
+程序上这些是一个底层的小操作系统. 这些东西运行起来之后, 再引导系统的启动.</p>
+
+<p>默认情况下, EFI 就是支持多个启动选项的存在的. 可以在 linux 通过 efibootmgr 这样的程序来修改.
+这个修改应该是修改的引导区的信息. EFI 分区里, EFI 目录下可能有多个目录用于保存不同的引导.
+MAC 下的 bless 应该也是一个相似的工具.</p>
+
+<h3>rEFInd</h3>
+<p>这是一个 UEFI 的启动管理器. 是 rEFIt 的一个分支. 有针对对于 MAC 进行一些优化. 但是平台无关的.
+这个东西为什么要存在呢? 我们之前说过, EFI 是可以修改引导的选项的. 但是这个修改可能并不方便,
+efibootmgr 要在 linux 下运行. 我们要的是一个可以在 EFI 进入一个引导项的时候进行选项的工具.
+rEFInd 就是这样一个东西. 它作为默认的引导项, 开机启动之后, 让你选择进入其它的哪一个. 比如 APPLE, linux,
+windows. 这就是它的存在的意义.</p>
+
+<p>当要安装 mac pro 下的双系统的时候, 一般是要安装这个东西的. 但是我这里出现了一些问题, 没有办法安装.
+因为 SIP (System Integrity Protection) 的限制, 没有办法安装 rEFInd. 同时我的 recovery 分区好像也没有了.
+我也不知道是怎么没有的. 但是没有了. 试了好几个方法都没有办法.</p>
+
+<p>但是我突然想到 rEFInd 其实是与系统没有关系的吧. 那我可以在使用 linux 启动 U 盘安装系统的时候, 再安装 rEFInd
+的啊. 嗯, 没错是可以的.</p>
+
+<h3>grub</h3>
+<p>安装了系统, 这个时候还是要为系统设置 grub 的, 不然没有办法启动的, 现在又到了 EFI 这个问题上.
+现在如果不考虑双系统的问题, 如果只有一个系统, 使用 EFI 进行安装 grub.</p>
+
+<p><pre>
+grub-install --target=x86_64-efi --efi-directory=$esp --bootloader-id=grub --recheck
+</pre>
+</p>
+
+<p>
+    <ul>
+
+        <li>--bootloader-id: 引导项的名字, 就比如 APPLE, WINDOWS. 之类的自己起,
+
+        <li>--efi-directory: ESP 分区的挂载点.
+    </ul></p>
+
+<p>这个过程中比较重要的一点就是把 grub 的 EFI 程序 grubx64.efi 放到 $esp/EFI/grub 下面.
+比如, 我把 ESP 挂载到了 /boot/efi. 当然 grub 的引导器和配置文件还是在 /boot/grub 下面.</p>
+
+<p>之后可能你还要使用 grub-mkconfig 生成一下配置文件.
+<pre>
+# grub-mkconfig -o $esp/EFI/grub/grub.cfg
+</pre>
+</p>
+
+<p>这个过程中没有使用 device_path 这个东西, 因为 UEFI 不会使用启动块.</p>
+
+<h3>UEFI 变量</h3>
+<p>不用使用 device_path, 那 UEFI 是如何知道使用 $esp/EFI 下面的哪一个的呢, 这下面可能有很多啊.
+哪个是默认的, 顺序是如何的呢? 这些是写入到主板的硬件里的. 所以使用 EFI, 系统也要支持. 因为有可能要
+配置主板硬件. 对于 ESP 下的文件的加载与执行是由硬件的固件在实现的. 对于默认启动项的选择也是
+保存到固件里的.</p>
+
+<p>而 linux 使用的是就是 /sys/firmware/efi/efivars 来处理硬件上定义的变量. efibootmgr 也就是通过这个来
+处理 EFI 的一些特性. 这个修改是和 ESP 没有关系的.</p>
+
+<h3>参考</h3>
+<p>&nbsp;<a href=https://wiki.archlinux.org/index.php/GRUB >https://wiki.archlinux.org/index.php/GRUB</a>&nbsp;</p>

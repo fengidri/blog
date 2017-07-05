@@ -1,0 +1,243 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Title: accept 协议栈
+%Class: tcp
+%Post:1
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+
+\section{应用层}
+\starttyping
+#include <sys/socket.h>
+int accept(int sockfd, struct sockaddr *cliaddr, socklen_t *addrlen);
+\stoptyping
+
+\section{BSD 层 sock_accept}
+\starttyping
+/*
+ *  For accept, we attempt to create a new socket, set up the link
+ *  with the client, wake up the client, then return the new
+ *  connected fd. We collect the address of the connector in kernel
+ *  space and move it to user at the very end. This is buggy because
+ *  we open the socket then return an error.
+ */
+//用于服务器接收一个客户端的连接请求，这里是值-结果参数，之前有说到
+//fd 为监听后套接字。最后返回一个记录了本地与目的端信息的套接字
+//upeer_sockaddr用来返回已连接客户的协议地址，如果对协议地址不感兴趣就NULL
+static int sock_accept(int fd, struct sockaddr *upeer_sockaddr, int *upeer_addrlen)
+{
+    struct file *file;
+    struct socket *sock, *newsock;
+    int i;
+    char address[MAX_SOCK_ADDR];
+    int len;
+
+    if (fd < 0 || fd >= NR_OPEN || ((file = current->files->fd[fd]) == NULL))
+        return(-EBADF);
+    if (!(sock = sockfd_lookup(fd, &file)))
+        return(-ENOTSOCK);
+    if (sock->state != SS_UNCONNECTED)//socket各个状态的演变是一步一步来的
+    {
+        return(-EINVAL);
+    }
+    //这是tcp连接，得按步骤来
+    if (!(sock->flags & SO_ACCEPTCON))//没有listen
+    {
+        return(-EINVAL);
+    }
+    //分配一个新的套接字，用于表示后面可进行通信的套接字
+    if (!(newsock = sock_alloc()))
+    {
+        printk("NET: sock_accept: no more sockets\n");
+        return(-ENOSR); /* Was: EAGAIN, but we are out of system
+                   resources! */
+    }
+    newsock->type = sock->type;
+    newsock->ops = sock->ops;
+    //套接字重定向，目的是初始化新的用于数据传送的套接字
+    //继承了第一参数传来的服务器的IP和端口号信息
+    if ((i = sock->ops->dup(newsock, sock)) < 0)
+    {
+        sock_release(newsock);
+        return(i);
+    }
+    //转调用inet_accept
+    i = newsock->ops->accept(sock, newsock, file->f_flags);
+    if ( i < 0)
+    {
+        sock_release(newsock);
+        return(i);
+    }
+    //分配一个文件描述符，用于以后的数据传送
+    if ((fd = get_fd(SOCK_INODE(newsock))) < 0)
+    {
+        sock_release(newsock);
+        return(-EINVAL);
+    }
+    //返回通信远端的地址
+    if (upeer_sockaddr)
+    {//得到客户端地址，并复制到用户空间
+        newsock->ops->getname(newsock, (struct sockaddr *)address, &len, 1);
+        move_addr_to_user(address,len, upeer_sockaddr, upeer_addrlen);
+    }
+    return(fd);
+}
+\stoptyping
+
+\section{INET 层 inet_accept}
+\starttyping
+/*
+ *  Accept a pending connection. The TCP layer now gives BSD semantics.
+ */
+//先去看看sock_accept，看看各个参数的意思，newsock是dup sock后的新sock
+//sock为监听套接字，newsock为连接成功后实际用于通信的sock
+static int inet_accept(struct socket *sock, struct socket *newsock, int flags)
+{
+    struct sock *sk1, *sk2;
+    int err;
+
+    sk1 = (struct sock *) sock->data;
+
+    /*
+     * We've been passed an extra socket.
+     * We need to free it up because the tcp module creates
+     * its own when it accepts one.
+     */
+     //如果sock->data 已经指向了对应的sock结构，则把它销毁
+     //销毁旧的，后面指向新的accept后的
+    if (newsock->data)
+    {
+        struct sock *sk=(struct sock *)newsock->data;
+        newsock->data=NULL;
+        sk->dead = 1;
+        destroy_sock(sk);//销毁旧的socket对应的sock结构
+    }
+
+    if (sk1->prot->accept == NULL) //没有对应的操作函数集，退出
+        return(-EOPNOTSUPP);
+
+    /* Restore the state if we have been interrupted, and then returned. */
+//如果套接字在等待连接的过程中被中断，则监听套接字与中断的套接字关联，下次优先处理该套接字
+    if (sk1->pair != NULL )
+    {
+        sk2 = sk1->pair;
+        sk1->pair = NULL;
+    }
+    else
+    {
+//这里调用下层处理函数tcp_accept，首次调用inet_accept，sk1->pair 肯定是为NULL的，所以一开始就会执行下面的代码
+        sk2 = sk1->prot->accept(sk1,flags);//交给下层处理函数
+        if (sk2 == NULL)
+        {
+            if (sk1->err <= 0)
+                printk("Warning sock.c:sk1->err <= 0.  Returning non-error.\n");
+            err=sk1->err;
+            sk1->err=0;
+            return(-err);
+        }
+    }
+    //socket sock建立关联
+    newsock->data = (void *)sk2;//指向新的，sk2为下层函数tcp_accept返回的套接字
+    sk2->sleep = newsock->wait;//等待队列
+    sk2->socket = newsock;//回绑，指向上层的socket结构
+    newsock->conn = NULL;//还没有连接客户端
+    if (flags & O_NONBLOCK)
+        return(0);
+
+    cli(); /* avoid the race. */
+    //三次握手中间过程，tcp SYN序列号接收
+    while(sk2->state == TCP_SYN_RECV)
+    {
+    //被中断了
+        interruptible_sleep_on(sk2->sleep);
+        if (current->signal & ~current->blocked)
+        {
+            sti();
+            sk1->pair = sk2;//存入pair，下次优先处理
+            sk2->sleep = NULL;
+            sk2->socket=NULL;
+            newsock->data = NULL;
+            return(-ERESTARTSYS);
+        }
+    }
+    sti();
+    //连接失败，三次握手失败
+    if (sk2->state != TCP_ESTABLISHED && sk2->err > 0)
+    {
+        err = -sk2->err;
+        sk2->err=0;
+        sk2->dead=1; /* ANK */
+        destroy_sock(sk2);//销毁新建的sock结构
+        newsock->data = NULL;
+        return(err);
+    }
+    newsock->state = SS_CONNECTED;//已经建立了连接
+    return(0);
+}
+\stoptyping
+
+\section{传输层: tcp_accept}
+\starttyping
+
+/*
+ *  This will accept the next outstanding connection.
+ */
+ //accept->sock_accpet->inet_accpet->tcp_accept(tcp)
+ //顶层accept传值进来的套接字sk是监听套接字，然后返回可以进行数据通信的套接字
+ //tcp_accept就是从监听套接字缓存队列里面找到一个完成连接的套接字
+static struct sock *tcp_accept(struct sock *sk, int flags)
+{
+    struct sock *newsk;
+    struct sk_buff *skb;
+
+  /*
+   * We need to make sure that this socket is listening,
+   * and that it has something pending.
+   */
+
+    if (sk->state != TCP_LISTEN) //如果当前不是出于监听状态就退出
+    {
+        sk->err = EINVAL;
+        return(NULL);
+    }
+    //套接字处于监听状态
+    /* Avoid the race. */
+    cli();
+    sk->inuse = 1;//表示当前进程正在使用该sock结构，其余进程不能使用，加锁
+
+  //从监听套接字缓存队列里找到已经建立连接的套接字,并返回
+    while((skb = tcp_dequeue_established(sk)) == NULL)
+    {
+    //如果没有完成连接的，就一直陷入循环，然后重发back_log中的数据包
+        if (flags & O_NONBLOCK) //不阻塞
+        {
+            sti();
+//如果当前套接字正忙，数据包将插入到sock结构的back_log队列中，back_log只是暂居之所
+//数据包必须插入到receive_queue中才算被接收
+            release_sock(sk);//从back_log中取数据包重新调用tcp_rcv函数对数据包进行接收
+            sk->err = EAGAIN;
+            return(NULL);
+        }
+
+        release_sock(sk);//从back_log中取数据包重新调用tcp_rcv函数对数据包进行接收
+        interruptible_sleep_on(sk->sleep);
+        if (current->signal & ~current->blocked)
+        {
+            sti();
+            sk->err = ERESTARTSYS;
+            return(NULL);
+        }
+        sk->inuse = 1;//加锁
+    }
+    sti();
+
+    /*
+     *  Now all we need to do is return skb->sk.
+     */
+    newsk = skb->sk;//返回的套接字(已完成连接)
+
+    kfree_skb(skb, FREE_READ);//释放sk_buff
+    sk->ack_backlog--;//未应答数据包个数-1
+    release_sock(sk);//原套接字继续监听
+    return(newsk);
+}
+\stoptyping

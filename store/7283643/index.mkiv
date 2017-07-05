@@ -1,0 +1,92 @@
+%Title: linux 声音系统
+%Class: linux
+%Post:1
+%
+%
+\section{ALSA}
+高级Linux声音体系（英语：Advanced Linux Sound Architecture，缩写为ALSA）是Linux内核中，
+为声卡提供的驱动组件，以替代原先的OSS（开放声音系统）。
+一部分的目的是支持声卡的自动配置，以及完美的处理系统中的多个声音设备，
+这些目的大多都已达到。
+
+ALSA是一个完全开放源代码的音频驱动程序集，除了像OSS那样提供了一组内核驱动程序模块之外，
+ALSA还专门为简化应用程序的编写提供了相应的函数库，与OSS提供的基于ioctl的原始编程接口相比，
+ALSA函数库使用起来要更加方便一些。利用该函数库，开发人员可以方便快捷的开发出自己的应用程序，
+细节则留给函数库内部处理。
+当然ALSA也提供了类似于OSS的系统接口，不过ALSA的开发者建议应用程序开发者使用音频函数库而不是驱动程序的API。
+
+aplay 是一个alsa 的配置命令.
+
+\section{PulseAudio}
+
+PulseAudio是一个声音服务器，一个后台进程从一个或多个音源（进程或输入设备）
+接受声音输入 然后重定向声音到一个或多个槽（声卡，远程网络PulseAudio服务，或其他进程）。
+
+PulseAudio的一个目的通过它重定向所有声音流，包括那些试图访问硬件的进程
+（像那些遗留的基于OSS的软件）。
+PulseAudio通过提供适配器给那些使用不同的声音系统，像aRts和ESounD。
+
+在Linux下的典型方案，用户提供配置ALSA来使用PulseAudio提供的虚拟设备。
+尽管应用使用ALSA会将输出的声音输出到PulseAudio，
+然后PulseAudio会使用ALSA它自己来访问真正的声卡.
+PulseAudio同样提供它自己的接口给应用程序，用来直接支持PulseAudio，
+就像那些遗留的基于ESD的软件，这样使得PulseAudio适合作为ESD的替代品。
+
+对于OSS的软件, PulseAudio提供padsp工具，用来代替硬件文件夹像/dev/dsp，欺骗应用程序，
+使程序以为它们有声卡的完全控制权。在事实上，它们的输出被PulseAudio重定向。
+
+下图展示了linux 中的声音系统的结构:
+\img{http://i2.tietuku.com/b0be0416b64ca7b2.png}
+
+pavucontrol 是一个图形的工具用来进行相关的设置.
+
+
+
+
+
+
+%--------------------------------------------------------------
+
+\section{问题1}
+新的机器有耳机与HDMI 扬声器. 问题也有两个, 一是HDMI好像无法正常使用, 另一个
+是耳机应该可以使用但是没有声音.
+
+耳机没有声音的问题就是因为PulseAudio 没有安装导致的. 安装之后OK.
+
+
+但是HDMI 的问题并没有解决
+
+\starttyping
+ $ aplay -l
+ **** List of PLAYBACK Hardware Devices ****
+ card 0: NVidia [HDA NVidia], device 0: ALC1200 Analog [ALC1200 Analog]
+   Subdevices: 1/1
+   Subdevice #0: subdevice #0
+ card 0: NVidia [HDA NVidia], device 1: ALC1200 Digital [ALC1200 Digital]
+   Subdevices: 1/1
+   Subdevice #0: subdevice #0
+ card 0: NVidia [HDA NVidia], device 3: NVIDIA HDMI [NVIDIA HDMI]
+   Subdevices: 0/1
+   Subdevice #0: subdevice #0
+\stoptyping
+
+我们需要的是 HDMI 设备的信息，下面来做一个测试（在该例中，0是声卡编号，3是设备编号）：
+\starttyping
+ $ aplay -D plughw:0,3 /usr/share/sounds/alsa/Front_Center.wav
+\stoptyping
+
+
+
+
+\section{参考}
+\startitemize
+\item  \goto{ALSA wikipedia}{http://zh.wikipedia.org/wiki/ALSA}
+\item \goto{PulseAudio wikipedia}{http://zh.wikipedia.org/wiki/PulseAudio}
+\item \goto{通过 PulseAudio 实现局域网音乐播放}{http://www.linuxidc.com/Linux/2014-12/110200.htm}
+\stopitemize
+
+
+
+
+
+

@@ -1,0 +1,84 @@
+<p></p>
+
+<p>这里记录了一些 sock 相关的总体性的数据. 我比较关注的是其中的 mem:</p>
+
+<p><pre>
+sockets: used 121
+TCP: inuse 18 orphan 0 tw 64 alloc 20 mem 6
+UDP: inuse 0 mem 0
+UDPLITE: inuse 0
+RAW: inuse 0
+FRAG: inuse 0 memory 0
+</pre>
+</p>
+
+<p>其中 mem 的单位很少有说清的地方, 我就自己看一一下 kernel 代码:
+<pre>
+static int sockstat_seq_show(struct seq_file *seq, void *v)
+{
+        struct net *net = seq-&gt;private;
+        unsigned int frag_mem;
+        int orphans, sockets;
+
+        local_bh_disable();
+        orphans = percpu_counter_sum_positive(&amp;tcp_orphan_count);
+        sockets = proto_sockets_allocated_sum_positive(&amp;tcp_prot);
+        local_bh_enable();
+
+        socket_seq_show(seq);
+        seq_printf(seq, "TCP: inuse %d orphan %d tw %d alloc %d mem %ld\n",
+                   sock_prot_inuse_get(net, &amp;tcp_prot), orphans,
+                   tcp_death_row.tw_count, sockets,
+                   proto_memory_allocated(&amp;tcp_prot));
+        seq_printf(seq, "UDP: inuse %d mem %ld\n",
+                   sock_prot_inuse_get(net, &amp;udp_prot),
+                   proto_memory_allocated(&amp;udp_prot));
+        seq_printf(seq, "UDPLITE: inuse %d\n",
+                   sock_prot_inuse_get(net, &amp;udplite_prot));
+        seq_printf(seq, "RAW: inuse %d\n",
+                   sock_prot_inuse_get(net, &amp;raw_prot));
+        frag_mem = ip_frag_mem(net);
+        seq_printf(seq,  "FRAG: inuse %u memory %u\n", !!frag_mem, frag_mem);
+        return 0;
+}
+
+static inline long
+proto_memory_allocated(struct proto *prot)
+{
+        return atomic_long_read(prot-&gt;memory_allocated);
+}
+
+static inline long
+sk_memory_allocated_add(struct sock *sk, int amt)
+{
+        return atomic_long_add_return(amt, sk-&gt;sk_prot-&gt;memory_allocated);
+}
+
+int __sk_mem_raise_allocated(struct sock *sk, int size, int amt, int kind)
+{
+        struct proto *prot = sk-&gt;sk_prot;
+        long allocated = sk_memory_allocated_add(sk, amt);
+
+        if (mem_cgroup_sockets_enabled &amp;&amp; sk-&gt;sk_memcg &amp;&amp;
+            !mem_cgroup_charge_skmem(sk-&gt;sk_memcg, amt))
+                goto suppress_allocation;
+
+
+       ....
+}
+
+int __sk_mem_schedule(struct sock *sk, int size, int kind)
+{
+        int ret, amt = sk_mem_pages(size);
+
+        sk-&gt;sk_forward_alloc += amt &lt;&lt; SK_MEM_QUANTUM_SHIFT;
+        ret = __sk_mem_raise_allocated(sk, size, amt, kind);
+        if (!ret)
+                sk-&gt;sk_forward_alloc -= amt &lt;&lt; SK_MEM_QUANTUM_SHIFT;
+        return ret;
+}
+</pre>
+
+以上是相关性的函数. 在 __sk_mem_schedule 中有一个 size 转成 amt 的过程, 这个过程是基于 page
+进行计算的. 后面对于memory_allocated 的增加都是直接增加的 amt 这个变量. 所以这里认为其就是以 page
+</p>

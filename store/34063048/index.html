@@ -1,0 +1,264 @@
+<p></p>
+
+<h3>代码注释</h3>
+<p><pre>
+void tcp_retransmit_timer(struct sock *sk)
+{
+	struct tcp_sock *tp = tcp_sk(sk);
+	struct inet_connection_sock *icsk = inet_csk(sk);
+
+	if (tp-&gt;fastopen_rsk) {
+		WARN_ON_ONCE(sk-&gt;sk_state != TCP_SYN_RECV &amp;&amp;
+			     sk-&gt;sk_state != TCP_FIN_WAIT1);
+		tcp_fastopen_synack_timer(sk);
+		/* Before we receive ACK to our SYN-ACK don't retransmit
+		 * anything else (e.g., data or FIN segments).
+		 */
+		return;
+	}
+	if (!tp-&gt;packets_out)
+		goto out;
+
+	WARN_ON(tcp_write_queue_empty(sk));
+
+	tp-&gt;tlp_high_seq = 0;
+
+	if (!tp-&gt;snd_wnd &amp;&amp; !sock_flag(sk, SOCK_DEAD) &amp;&amp;
+	    !((1 &lt;&lt; sk-&gt;sk_state) &amp; (TCPF_SYN_SENT | TCPF_SYN_RECV))) {
+		/* Receiver dastardly shrinks window. Our retransmits
+		 * become zero probes, but we should not timeout this
+		 * connection. If the socket is an orphan, time it out,
+		 * we cannot allow such beasts to hang infinitely.
+		 */
+        // if 如果是零窗且不是握手包（零窗时仍能发送SYN/SYN-ACK包，由于不包含数据）
+
+		struct inet_sock *inet = inet_sk(sk);
+		if (sk-&gt;sk_family == AF_INET) {
+			net_dbg_ratelimited("Peer %pI4:%u/%u unexpectedly shrunk window %u:%u (repaired)\n",
+					    &amp;inet-&gt;inet_daddr,
+					    ntohs(inet-&gt;inet_dport),
+					    inet-&gt;inet_num,
+					    tp-&gt;snd_una, tp-&gt;snd_nxt);
+		}
+#if IS_ENABLED(CONFIG_IPV6)
+		else if (sk-&gt;sk_family == AF_INET6) {
+			net_dbg_ratelimited("Peer %pI6:%u/%u unexpectedly shrunk window %u:%u (repaired)\n",
+					    &amp;sk-&gt;sk_v6_daddr,
+					    ntohs(inet-&gt;inet_dport),
+					    inet-&gt;inet_num,
+					    tp-&gt;snd_una, tp-&gt;snd_nxt);
+		}
+#endif
+        // 检查保活时间上限，如果超过上限，则表示TCP连接已经断开，通知上层应用
+		if (tcp_time_stamp - tp-&gt;rcv_tstamp &gt; TCP_RTO_MAX) {
+			tcp_write_err(sk);
+			goto out;
+		}
+        // 进入Loss拥塞状态
+		tcp_enter_loss(sk);
+        // 重传队列首包重传
+		tcp_retransmit_skb(sk, tcp_write_queue_head(sk));
+        // 重置路由缓存
+		__sk_dst_reset(sk);
+        // 设置超时时钟，如果重传发送成功重传时间增大2倍（以避免拥塞），如果重传发送失败重传时间不变
+		goto out_reset_timer;
+	}
+    // if 如果是非零窗 或是握手包
+
+
+    // 根据sysctl配置，检查重传次数是否已经超过上限，如果超过上限说明连接异常断开，通知上层应用
+	if (tcp_write_timeout(sk))
+		goto out;
+
+    // 如果是第一次重传，则统计MIB信息
+	if (icsk-&gt;icsk_retransmits == 0) {
+		int mib_idx;
+
+		if (icsk-&gt;icsk_ca_state == TCP_CA_Recovery) {
+			if (tcp_is_sack(tp))
+				mib_idx = LINUX_MIB_TCPSACKRECOVERYFAIL;
+			else
+				mib_idx = LINUX_MIB_TCPRENORECOVERYFAIL;
+		} else if (icsk-&gt;icsk_ca_state == TCP_CA_Loss) {
+			mib_idx = LINUX_MIB_TCPLOSSFAILURES;
+		} else if ((icsk-&gt;icsk_ca_state == TCP_CA_Disorder) ||
+			   tp-&gt;sacked_out) {
+			if (tcp_is_sack(tp))
+				mib_idx = LINUX_MIB_TCPSACKFAILURES;
+			else
+				mib_idx = LINUX_MIB_TCPRENOFAILURES;
+		} else {
+			mib_idx = LINUX_MIB_TCPTIMEOUTS;
+		}
+		NET_INC_STATS_BH(sock_net(sk), mib_idx);
+	}
+
+    // 进入Loss拥塞状态或Disorder拥塞状态
+	tcp_enter_loss(sk);
+
+    // 重传队列首包重传
+	if (tcp_retransmit_skb(sk, tcp_write_queue_head(sk)) &gt; 0) {
+		/* Retransmission failed because of local congestion,
+		 * do not backoff.
+		 */
+		if (!icsk-&gt;icsk_retransmits)
+			icsk-&gt;icsk_retransmits = 1;
+		inet_csk_reset_xmit_timer(sk, ICSK_TIME_RETRANS,
+					  min(icsk-&gt;icsk_rto, TCP_RESOURCE_PROBE_INTERVAL),
+					  TCP_RTO_MAX);
+		goto out;
+	}
+
+	/* Increase the timeout each time we retransmit.  Note that
+	 * we do not increase the rtt estimate.  rto is initialized
+	 * from rtt, but increases here.  Jacobson (SIGCOMM 88) suggests
+	 * that doubling rto each time is the least we can get away with.
+	 * In KA9Q, Karn uses this for the first few times, and then
+	 * goes to quadratic.  netBSD doubles, but only goes up to *64,
+	 * and clamps at 1 to 64 sec afterwards.  Note that 120 sec is
+	 * defined in the protocol as the maximum possible RTT.  I guess
+	 * we'll have to use something other than TCP to talk to the
+	 * University of Mars.
+	 *
+	 * PAWS allows us longer timeouts and large windows, so once
+	 * implemented ftp to mars will work nicely. We will have to fix
+	 * the 120 second clamps though!
+	 */
+	icsk-&gt;icsk_backoff++;
+	icsk-&gt;icsk_retransmits++;
+
+out_reset_timer:
+	/* If stream is thin, use linear timeouts. Since 'icsk_backoff' is
+	 * used to reset timer, set to 0. Recalculate 'icsk_rto' as this
+	 * might be increased if the stream oscillates between thin and thick,
+	 * thus the old value might already be too high compared to the value
+	 * set by 'tcp_set_rto' in tcp_input.c which resets the rto without
+	 * backoff. Limit to TCP_THIN_LINEAR_RETRIES before initiating
+	 * exponential backoff behaviour to avoid continue hammering
+	 * linear-timeout retransmissions into a black hole
+	 */
+    // 设置超时时钟，如果重传发送成功重传时间增大2倍（以避免拥塞），如果重传发送失败重传时间不变
+	if (sk-&gt;sk_state == TCP_ESTABLISHED &amp;&amp;
+	    (tp-&gt;thin_lto || sysctl_tcp_thin_linear_timeouts) &amp;&amp;
+	    tcp_stream_is_thin(tp) &amp;&amp;
+	    icsk-&gt;icsk_retransmits &lt;= TCP_THIN_LINEAR_RETRIES) {
+		icsk-&gt;icsk_backoff = 0;
+		icsk-&gt;icsk_rto = min(__tcp_set_rto(tp), TCP_RTO_MAX);
+	} else {
+		/* Use normal (exponential) backoff */
+		icsk-&gt;icsk_rto = min(icsk-&gt;icsk_rto &lt;&lt; 1, TCP_RTO_MAX);
+	}
+	inet_csk_reset_xmit_timer(sk, ICSK_TIME_RETRANS, icsk-&gt;icsk_rto, TCP_RTO_MAX);
+	if (retransmits_timed_out(sk, sysctl_tcp_retries1 + 1, 0, 0))
+		__sk_dst_reset(sk);
+
+out:;
+}
+</pre>
+</p>
+
+<p><pre>
+
+/* This function calculates a "timeout" which is equivalent to the timeout of a
+ * TCP connection after "boundary" unsuccessful, exponentially backed-off
+ * retransmissions with an initial RTO of TCP_RTO_MIN or TCP_TIMEOUT_INIT if
+ * syn_set flag is set.
+ */
+static bool retransmits_timed_out(struct sock *sk,
+				  unsigned int boundary,
+				  unsigned int timeout,
+				  bool syn_set)
+{
+	unsigned int linear_backoff_thresh, start_ts;
+	unsigned int rto_base = syn_set ? TCP_TIMEOUT_INIT : TCP_RTO_MIN;
+
+	if (!inet_csk(sk)-&gt;icsk_retransmits)
+		return false;
+
+	start_ts = tcp_sk(sk)-&gt;retrans_stamp;// 第一次重传时间或发送时间
+	if (unlikely(!start_ts))
+		start_ts = tcp_skb_timestamp(tcp_write_queue_head(sk));
+
+	if (likely(timeout == 0)) {
+		linear_backoff_thresh = ilog2(TCP_RTO_MAX/rto_base);
+
+		if (boundary &lt;= linear_backoff_thresh)
+			timeout = ((2 &lt;&lt; boundary) - 1) * rto_base;
+		else
+			timeout = ((2 &lt;&lt; linear_backoff_thresh) - 1) * rto_base +
+				(boundary - linear_backoff_thresh) * TCP_RTO_MAX;
+	}
+	return (tcp_time_stamp - start_ts) &gt;= timeout;
+}
+
+
+/* A write timeout has occurred. Process the after effects. */
+static int tcp_write_timeout(struct sock *sk)
+{
+	struct inet_connection_sock *icsk = inet_csk(sk);
+	struct tcp_sock *tp = tcp_sk(sk);
+	int retry_until;
+	bool do_reset, syn_set = false;
+
+	if ((1 &lt;&lt; sk-&gt;sk_state) &amp; (TCPF_SYN_SENT | TCPF_SYN_RECV)) {
+		if (icsk-&gt;icsk_retransmits) {
+			dst_negative_advice(sk);
+			if (tp-&gt;syn_fastopen || tp-&gt;syn_data)
+				tcp_fastopen_cache_set(sk, 0, NULL, true, 0);
+			if (tp-&gt;syn_data)
+				NET_INC_STATS_BH(sock_net(sk),
+						 LINUX_MIB_TCPFASTOPENACTIVEFAIL);
+		}
+		retry_until = icsk-&gt;icsk_syn_retries ? : sysctl_tcp_syn_retries;
+		syn_set = true;
+	} else {
+		if (retransmits_timed_out(sk, sysctl_tcp_retries1, 0, 0)) {
+			/* Black hole detection */
+			tcp_mtu_probing(icsk, sk);
+
+			dst_negative_advice(sk);
+		}
+
+		retry_until = sysctl_tcp_retries2;
+		if (sock_flag(sk, SOCK_DEAD)) {
+			const int alive = icsk-&gt;icsk_rto &lt; TCP_RTO_MAX;
+
+			retry_until = tcp_orphan_retries(sk, alive);
+			do_reset = alive ||
+				!retransmits_timed_out(sk, retry_until, 0, 0);
+
+			if (tcp_out_of_resources(sk, do_reset))
+				return 1;
+		}
+	}
+
+	if (retransmits_timed_out(sk, retry_until,
+				  syn_set ? 0 : icsk-&gt;icsk_user_timeout, syn_set)) {
+		/* Has it gone just too far? */
+		tcp_write_err(sk);
+		return 1;
+	}
+	return 0;
+}
+</pre>
+</p>
+
+<p>重传过程中的 timeout 计算:
+<pre>
+TCP_RTO_MIN=(HZ/5)=0.2s
+TCP_RTO_MAX=(120*HZ)=120s
+linear_backoff_thresh = ilog2(120*5)=ilog2(0x258)=9
+</pre>
+
+timeout：未超过linear_backoff_thresh=9的部分按TCP_RTO_MIN 2的指数倍增长，超过的部分按TCP_RTO_MAX线性增长
+tcp_time_stamp：当前时钟时间
+例如数据发送阶段，sysctl_tcp_retries2=9，则timeout=1023*TCP_RTO_MIN=204.6s；
+sysctl_tcp_retries2=11时，timeout=1023*TCP_RTO_MIN+2*TCP_RTO_MAX=448.6s
+默认sysctl_tcp_retries2=15，timeout=1023*TCP_RTO_MIN+6*TCP_RTO_MAX=920.6s，约15分钟</p>
+
+<h3>超时时间</h3>
+<p>TCP 里的超时时间都是使用指数退避的思路的思路. 但是这要求有一个初始值.
+ 当收到 ACK 的时候, 会重新计算 RTT, 当然, 不会直接使用 RTT 而是使用平滑的计算方式得到 RTO.</p>
+
+<h3>参考</h3>
+<p>&nbsp;<a href=http://blog.csdn.net/morphad/article/details/9020531 >http://blog.csdn.net/morphad/article/details/9020531</a>&nbsp;</p>

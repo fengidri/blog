@@ -1,0 +1,155 @@
+<p></p>
+
+<h3>malloc_trim</h3>
+<p>最近遇到了一个 glibc/ptmalloc 的内存空洞的问题. 遇到了一个 malloc_trim 的问题.
+本来就内存空洞来说, malloc_trim 应该是没有什么作用的.</p>
+
+<p><pre>
+       The malloc_trim() function attempts to release free memory at the top
+       of the heap (by calling sbrk(2) with a suitable argument).
+
+       The pad argument specifies the amount of free space to leave
+       untrimmed at the top of the heap.  If this argument is 0, only the
+       minimum amount of memory is maintained at the top of the heap (i.e.,
+       one page or less).  A nonzero argument can be used to maintain some
+       trailing space at the top of the heap in order to allow future
+       allocations to be made without having to extend the heap with
+       sbrk(2).
+</pre>
+</p>
+
+<p>但是看了一下相关的文章:</p>
+
+<p>&nbsp;<a href=http://www.cnblogs.com/lookof/archive/2013/03/26/2981768.html >http://www.cnblogs.com/lookof/archive/2013/03/26/2981768.html</a>&nbsp;,</p>
+
+<p>&nbsp;<a href=https://medium.com/@jackyu/memory-leak-malloc_trim-cccc33b0d9e1#.44b4b9zho >https://medium.com/@jackyu/memory-leak-malloc_trim-cccc33b0d9e1#.44b4b9zho</a>&nbsp;.</p>
+
+<p>都说 malloc_trim 好像可以释放空洞的空间. 我本来是不相信的. 但是我测试了一下.</p>
+
+<p>使用
+<pre>
+gdb --batch -p &lt;pid&gt; --ex "call malloc_trim(0)"
+</pre>
+</p>
+
+<p>发现内存 RES 确实减小了. 这样的话有两个解释:</p>
+
+<p>
+    <ul>
+
+        <li>heap top 上本来就有很大的空间, 可以释放.
+
+        <li>heap holes 确实被释放了.
+    </ul></p>
+
+<p>第一点不可能. 我查看了所有源代码也都没有对于 M_TRIM_THRESHOLD 的修改.
+那就是 holes 真的被释放了. 我进一步查看, 注意到虚拟内存的大小并没有发生变化.
+我打印了, 操作 malloc_trim 前后的进程的 pmap,diff 了一下发现是一样的.
+这直接否定了, 前面的两个猜测.</p>
+
+<p>基于这个事实我猜测: 是不是直接进行了物理内存的映射的解除.</p>
+
+<p>没有线索的情况下, 查看了 malloc_trim 的源代码:
+<pre>
+static int
+mtrim (mstate av, size_t pad)
+{
+  /* Don't touch corrupt arenas.  */
+  if (arena_is_corrupt (av))
+    return 0;
+
+  /* Ensure initialization/consolidation */
+  malloc_consolidate (av);
+
+  const size_t ps = GLRO (dl_pagesize);
+  int psindex = bin_index (ps);
+  const size_t psm1 = ps - 1;
+
+  int result = 0;
+  for (int i = 1; i &lt; NBINS; ++i)
+    if (i == 1 || i &gt;= psindex)
+      {
+        mbinptr bin = bin_at (av, i);
+
+        for (mchunkptr p = last (bin); p != bin; p = p-&gt;bk)
+          {
+            INTERNAL_SIZE_T size = chunksize (p);
+
+            if (size &gt; psm1 + sizeof (struct malloc_chunk))
+              {
+                /* See whether the chunk contains at least one unused page.  */
+                char *paligned_mem = (char *) (((uintptr_t) p
+                                                + sizeof (struct malloc_chunk)
+                                                + psm1) &amp; ~psm1);
+
+                assert ((char *) chunk2mem (p) + 4 * SIZE_SZ &lt;= paligned_mem);
+                assert ((char *) p + size &gt; paligned_mem);
+
+                /* This is the size we could potentially free.  */
+                size -= paligned_mem - (char *) p;
+
+                if (size &gt; psm1)
+                  {
+#if MALLOC_DEBUG
+                    /* When debugging we simulate destroying the memory
+                       content.  */
+                    memset (paligned_mem, 0x89, size &amp; ~psm1);
+#endif
+                    __madvise (paligned_mem, size &amp; ~psm1, MADV_DONTNEED);
+
+                    result = 1;
+                  }
+              }
+          }
+      }
+
+#ifndef MORECORE_CANNOT_TRIM
+  return result | (av == &amp;main_arena ? systrim (pad, av) : 0);
+
+#else
+  return result;
+#endif
+}
+</pre>
+</p>
+
+<p>结合一些资料, 注意到了 __madvise(就是 madvise).</p>
+
+<p><pre>
+The madvise() system call advises the kernel about how to handle paging
+input/output in the address range beginning at address addr and with
+size length bytes. It allows an application to tell the kernel how it
+expects to use some mapped or shared memory areas, so that the kernel
+can choose appropriate read-ahead and caching techniques. This call does
+not influence the semantics of the application (except in the case of
+MADV_DONTNEED), but may influence its performance. The kernel is free to
+ignore the advice.
+
+
+MADV_DONTNEED
+    Do not expect access in the near future. (For the time being, the
+    application is finished with the given range, so the kernel can free
+    resources associated with it.) Subsequent accesses of pages in this
+    range will succeed, but will result either in reloading of the memory
+    contents from the underlying mapped file (see mmap(2)) or
+    zero-fill-on-demand pages for mappings without an underlying file.
+</pre>
+</p>
+
+<p>我的猜测是正确的. 在 malloc_trim 的情况, 内存的空洞的物理映射被解除了.
+这样就把物理内存返回给了系统, 但是实际上进程的虚拟内存并没有受到影响.</p>
+
+<p>大概也正是因为虚拟内存空间没有收到的影响, 所以 malloc_trim
+的 man 上并没有说明这个问题.</p>
+
+<h3>其它</h3>
+<p>在研究内存空洞的问题的过程中, 最大的一个问题就是如何把程序的内存泄漏与 ptmalloc 的
+内存空洞问题进行区分. 下面的命令无疑是一个非常有效的方法.
+<pre>
+gdb --batch -p &lt;pid&gt; --ex "call malloc_trim(0)"
+</pre>
+</p>
+
+<h3>参考</h3>
+<p>&nbsp;<a href=http://man7.org/linux/man-pages/man3/malloc_trim.3.html >http://man7.org/linux/man-pages/man3/malloc_trim.3.html</a>&nbsp;
+&nbsp;<a href=https://linux.die.net/man/2/madvise >https://linux.die.net/man/2/madvise</a>&nbsp;</p>

@@ -1,0 +1,165 @@
+<p></p>
+
+<h3>介绍</h3>
+<p>下面介绍一些概念:</p>
+
+<h4><b>Bottom Half</b></h4>
+<p><b>Bottom Half</b>是软中断的一种典型应用, 它的得名来自于将硬件中断处理分离成"上半部"
+和"下半部"两个阶段的机制.
+上半部在屏蔽中断的上下文中运行，用于完成关键性的处理动作；
+而下半部则相对来说并不是非常紧急的，通常还是比较耗时的，
+因此由系统自行安排运行时机，不在中断服务上下文中执行。</p>
+
+<h4>软中断</h4>
+<p>软中断是利用硬件中断的概念，用软件方式进行模拟，实现宏观上的异步执行效果。</p>
+
+<p>
+    <ul>
+
+        <li>硬中断:外部设备对CPU的中断
+
+        <li>软中断:硬中断服务程序对内核的中断
+
+        <li>信号:信号则是由内核（或其他进程）对某个进程的中断
+    </ul></p>
+
+<h3><b>Bottom Half</b></h3>
+<p>最早的<b>Bottom Half</b>实现是使用类似向量表的方式. 定义一个回调函数
+数组, 每一个单元保存要使用的回调函数. 使用软中断的形式传递数组的
+索引, 程序退出, 由内核接收软中断的索引值来调用对应的回调函数.</p>
+
+<p>从而完成硬中断的异步执行的实现.</p>
+
+<h3>task queue</h3>
+<p>原始的<b>Bottom Half</b>的最大的问题在于回调有个数限制, 并且同个中断只能有一个回调.
+并且软件中断的异步执行的应用也越来越大.
+在2.4.2 中对于<b>Bottom Half</b>的实现进行了扩充.</p>
+
+<p>这个扩充在实质上是对于回调数量的扩充. 利用队列, 把多个回调函数连成一个
+队列. 而<b>Bottom Half</b>的一个回调函数可以执行这个队列上的所有的函数.</p>
+
+<p><b>task queue</b>的数据结构如下:
+<pre>
+struct tq_struct {
+        struct list_head list;          /* 链表结构 */
+        unsigned long sync;             /* 初始为0，入队时原子的置1，以避免重复入队 */
+        void (*routine)(void *);        /* 激活时调用的函数 */
+        void *data;                     /* routine(data) */
+};
+typedef struct list_head task_queue;
+</pre>
+
+使用方法:
+
+    <ul>
+
+        <li>创建一个队列
+
+        <li>定义自己的tq_struct
+
+        <li>把自己的tq_struct 注册到队列中
+
+        <li>调用run_task_queue
+    </ul>
+系统预定定义了三个<b>task queue</b>:
+
+    <ul>
+
+        <li>tq_timer，由时钟中断服务程序启动；
+
+        <li>tq_immediate，在中断返回前以及schedule()函数中启动；
+
+        <li>tq_disk，内存管理模块内部使用。
+    </ul></p>
+
+<p></p>
+
+<h3><b>tasklet</b></h3>
+<p><b>task queue</b>是以<b>Bottom Half</b>为基础实现一个软中断的多回调功能.
+而在后来<b>Bottom Half</b>的实现不再使用比较原始的向量表, 这个方式的
+32 种软中断的限制并没有解决. 系统引入了<b>tasklet</b>机制.</p>
+
+<p>不只这个限制, <b>tasklet</b>还提高了多个CPU 的利用率, 更好地支持了SMP.
+但是它也保证了同一个<b>tasklet</b>只运行在同一个CPU 上.
+<pre>
+struct tasklet_struct
+{
+        struct tasklet_struct *next;	/* 队列指针 */
+        unsigned long state;		/* tasklet的状态，按位操作，目前定义了两个位的含义：
+		TASKLET_STATE_SCHED（第0位）或TASKLET_STATE_RUN（第1位） */
+        atomic_t count;			/* 引用计数，通常用1表示disabled */
+        void (*func)(unsigned long);	/* 函数指针 */
+        unsigned long data;		/* func(data) */
+};
+</pre>
+</p>
+
+<p>使用方法比较简单, 新建一个tasklet_struct 数据结构, 把回调函数绑定上, 调用
+接口对于数据结构进行登记就可以了.</p>
+
+<p>软中断中有两种类型属于tasklet，分别是级别最高的HI_SOFTIRQ和TASKLET_SOFTIRQ。
+ Linux内核采用两个PER_CPU的数组tasklet_vec[]和tasklet_hi_vec[]维护系统种的所有tasklet（kernel/softirq.c），
+ 分别维护TASKLET_SOFTIRQ级别和HI_SOFTIRQ级别的tasklet</p>
+
+<h3>一个例子</h3>
+<p><pre>
+#include &lt;linux/module.h&gt;
+#include &lt;linux/init.h&gt;
+#include &lt;linux/fs.h&gt;
+#include &lt;linux/kdev_t.h&gt;
+#include &lt;linux/cdev.h&gt;
+#include &lt;linux/kernel.h&gt;
+#include &lt;linux/interrupt.h&gt;
+
+static struct tasklet_struct my_tasklet;
+
+static void tasklet_handler (unsigned long data)
+{
+        printk(KERN_ALERT "tasklet_handler is running.\n");
+}
+
+static int __init test_init(void)
+{
+        tasklet_init(&amp;my_tasklet, tasklet_handler, 0);
+        tasklet_schedule(&amp;my_tasklet);
+        return 0;
+}
+
+static void __exit test_exit(void)
+{
+        tasklet_kill(&amp;my_tasklet);
+        printk(KERN_ALERT "test_exit running.\n");
+}
+MODULE_LICENSE("GPL");
+
+module_init
+
+(test_init);
+module_exit(test_exit);
+</pre>
+</p>
+
+<h3>联想</h3>
+<p>在分布式与高并发系统中一个重要的问题就是网络请求的并发性. 这是
+高并发系统的一个重要的问题. 如果对于任务的处理并没有那么复杂的
+情况下, 一个常用的方式就是直接处理, 没有什么问题如redis.</p>
+
+<p>但是如果对于请求的响应很复杂的情况下, 当然不能直接处理. 那么解决方式
+自然就是异步处理. 这种情况下与中断的处理是何其相似.</p>
+
+<p>发起一个中断, 把任务放到任务队列中, 然后直接退出. 这样可以不阻塞
+中断的上下文. 网络处理中也是一样的方式, 把收到的网络请求放到队列中去,
+并不直接处理, 然后再接收新的请求.</p>
+
+<p>而tasklet 在任务处理时可以支持SMP, 而分布式系统中对于队列中的处理
+也经常由多个服务器进行处理, 从而实现并发.</p>
+
+<p>这种从微型到大型之间的相似, 就如同宇宙与原子之间的关系一样, 让人惊叹.</p>
+
+<p>
+    <ul>
+
+        <li>&nbsp;<a href=https://www.ibm.com/developerworks/cn/linux/kernel/interrupt/ >Linux 2.4.x内核软中断机制</a>&nbsp;
+
+        <li>&nbsp;<a href=http://blog.csdn.net/chengqianyun2002/article/details/1607005 >Linux tasklet 分析笔记（转载）</a>&nbsp;
+    </ul></p>

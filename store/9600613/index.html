@@ -1,0 +1,75 @@
+<p>
+两个问题,</p>
+
+<h3>spinlock的实现原理是</h3>
+<p>
+    <ul>
+
+        <li>在用户态尝试竞争一个共享资源. 如果竞争不到, 则不断尝试竞争. 但是不借助内核提供的mutex等变量机制. 因为涉及到内核,就意味这效率低下.
+
+        <li>要想在用户态实现竞争一个共享资源, 必须借助cpu提供的原子操作指令. 如果是SMP多cpu,还需要lock指令锁总线.
+
+        <li>为了避免在长时间竞争却一直得不到资源导致的不断尝试浪费cpu, 在每两次尝试之间间隔一段时间. 并且随着尝试次数的增加,间隔时间也增加.
+ 间隔期间可以让cpu稍加休息(注意,绝不是让出cpu),这依赖于cpu提供pausse指令.
+ (当然如果cpu没有提供pause也没关系,只是会很消耗电力资源) PAUSE指令提升了自旋等待循环（spin-wait loop）的性能。 http://blog.csdn.net/misterliwei/article/details/3951103</p>
+
+<p>
+        <li>在等待相当长时间还是得不到锁之后,只好让出cpu. 但必须让出很小一会.
+ 否则就不叫自旋锁了. 如何让出cpu,却有可以很快的回来?
+ 内核提供了 sched_yield()函数 sched_yield()主要功能: 简单的讲,可以使用另一个级别等于或高于当前线程的线程先运行。
+ 如果没有符合条件的线程，那么这个函数将会立刻返回然后继续执行当前线程的程序 参考:
+ sched_yield()函数 高级进程管理
+ http://blog.csdn.net/magod/article/details/7265555
+ 当然,如果系统不支持sched_yield, nginx被迫使用了usleep()休息1u秒.
+    </ul></p>
+
+<h3>spinlock的使用场景是</h3>
+<p>nginx借助spinlock的技术,实现了用户态的进程间的mutex.</p>
+
+<h3>具体分析一个spinlock的开源实现</h3>
+<p><pre>
+// 输入参数
+//    lock:一个整形变量的指针
+//    value:将lock设置新的值
+//    spin: 自旋的次数. 该值越大会尝试更多次获得锁. 然后才会转入让内核调度线程暂时让出cpu.
+void
+ngx_spinlock(ngx_atomic_t *lock, ngx_atomic_int_t value, ngx_uint_t spin)
+{
+#if (NGX_HAVE_ATOMIC_OPS)
+    ngx_uint_t  i, n;
+    for ( ;; ) {
+        if (*lock == 0 &amp;&amp; ngx_atomic_cmp_set(lock, 0, value)) {
+            return;
+        }
+        // 为何只在多个cpu的时候才多尝试spin几次?
+        // 呵呵,很简单,如果是单核的话,既然自己没有拿到锁,那说明别的线程/进程正在使用锁,就这么一个cpu,咱就不占着自旋了,否则别人没机会得到cpu,更不会释放锁了.
+        if (ngx_ncpu &gt; 1) {
+            for (n = 1; n &lt; spin; n &lt;&lt;= 1) {
+                // 空转的时间随着n的变大而变大
+                for (i = 0; i &lt; n; i++) {
+                    ngx_cpu_pause(); // 在空转的同时, 降低cpu功耗,提高效率
+                }
+                if (*lock == 0 &amp;&amp; ngx_atomic_cmp_set(lock, 0, value)) {
+                    return;
+                }
+            }
+        }
+        // 已经尝试这么久了还没有得到锁, 让cpu忙别人的事情吧. 让出cpu等待一下.
+        ngx_sched_yield();
+    }
+#else
+#if (NGX_THREADS)
+#error ngx_spinlock() or ngx_atomic_cmp_set() are not defined !
+#endif
+#endif
+}
+
+#if (NGX_HAVE_SCHED_YIELD)
+#define ngx_sched_yield()  sched_yield()
+#else
+#define ngx_sched_yield()  usleep(1)
+#endif
+</pre>
+</p>
+
+<p>&nbsp;<a href=http://blog.csdn.net/zdl1016/article/details/8899408 >nginx spinlock 自旋锁的实现</a>&nbsp;</p>

@@ -1,0 +1,231 @@
+%Title: Understanding How SystemTap Works
+%Class: systemtap
+%Post:0
+%
+%
+\def\st{SystemTap}
+\def\ss{\st\ Script}
+\section{\st介绍}
+\st 是一个深入到内核的分析工具. 它可以分析通过插入钩子的方法来
+对于系统中的调用进行分析.
+
+
+\st 的核心思想是事件（event），以及给出处理该事件的句柄（Handler）。
+\st 会监控这些事件, 当一个特定的事件发生时，内核运行该处理句柄，
+就像快速调用一个子函数一样，处理完之后恢复到内核原始状态。
+\startitemize
+\item  事件（Event）：\st 定义了很多种事件，例如进入或退出某个内核函数、
+定时器时间到、整个\st会话启动或退出等等。
+\item  句柄（Handler）：就是一些脚本语句，描述了当事件发生时要完成的工作，
+通常是从事件的上下文提取数据，将它们存入内部变量中，或者打印出来。
+\stopitemize
+
+\st 工作原理是通过将脚本语句翻译成C语句，编译成内核模块。
+模块加载之后，将所有探测的事件以钩子的方式挂到内核上，当任何处理器上的某个事件发生时，相应钩子上句柄就会被执行。
+最后，当\st会话结束之后，钩子从内核上取下，移除模块。
+
+\section{架构}
+运行一个\st 脚本就意味着开启了一个session.
+这个session 会执行下面会的方法过程.
+
+
+
+
+\startitemize
+\item  \st 会检查脚本, 针对于在tapset 库中已经存在的tapset, \st会
+使用库中对应的定义来替代它. 这些库一般在/usr/share/\st/tapset
+
+\item \st 会把这些脚本翻译成C, 然后使用系统中的C 编译器来创建内核模块.
+
+\item 下面由\st-runtime中的staprun 把模块载入到的内核中, 并让钩子生效.
+
+\item 事件发生的时候, 对应的处理方法就会生效
+\item 一旦\st Session 结束了, 探头就会失效. 内核模块也会被unload.
+\stopitemize
+
+这一系列的运作都是一个单独的命令行工具stap进行驱动的. Stap 是\st 的主前端
+工具.
+
+
+\section{\st 脚本}
+在大多数情况下, stap 脚本是一个\st session的基础.  \st scripts 指导
+\st 收集什么样的信息, 一旦信息收集到了之后做什么.
+
+事件与处理方法的共同体被叫做probe(探针). 一个\st scripts 可以有很多个probe.
+
+一个probe的handle被称做"a probe body".
+
+对于应用程序的开发而言, 使用events 和handlers 与通过在程序的顺序
+执行指令中插入用于诊断的print 指令来分析代码的意义是相似的. 一旦程序
+运行起来, 这些用于诊断的print 指令可以让你看到命令的执行效果.
+
+而\st 脚本可以在不重新编译代码的情况下插入用于诊断的处理方法, 并且更加
+灵活.
+events 是handlers的触发器.
+
+\st 的脚本扩展名为.stp.  一个脚本中可以有多个probes. probes的格式如下:
+
+\starttyping
+probe	event {statements}
+\stoptyping
+脚本中每个probes支持多个事件, 多个events 之间使用逗号进行划分. 当一个probe
+同时指定的多个events, SystempTap 会在任何一个事件发生的情况下执行handler.
+
+每一个probe有一个对应的声明块. 这个声明块使用大括号进行闭合.
+包含有每个事情要执行的语句.
+ SystempTap 顺序执行这些语句, 多个语句之间专门的分离与终止语句通常是没有必要的.
+
+\st 脚本中的语句块的语法与语义与C 相似. 一个语句块可以被嵌入到另一个语句块中.
+
+
+\st 允许你编写函数来分解代码, 从而可以被多个probes使用. 所以相对于在多个语句块中
+重复编写代码, 你可以把这些指令放到一个函数中.
+
+\starttyping
+function function_name(arguments) {statements}
+probe event {function_name(arguments)}
+\stoptyping
+
+\subsection{Event}
+\st 事件可以概括地分成两类: 同步的与异步的.
+
+\subsubsection{同步事件}
+
+
+同步事件发生在任何程序执行一个内核代码中特定的位置对应的指令时. 这
+给个其它的事件一个参考点, 可以从这里获得上下文的数据.
+
+同步事件的例子:
+
+\startitemize
+\item   [syscall.system_call]
+
+这个指向是进行系统调用的事件. 增加一个.return是指向系统调用的退出.
+比如要指定系统调用close的entry和exit. 可以分别使用syscall.close和syscall.close.return.
+
+\item  [vfs.file_operation]
+
+这是虚拟文件系统(VFS) 的操作入口, 与syscall 相似增加一个.return会监控操作的exit.
+
+\item [kernel.function("function")]
+
+内核函数的入口. 比如kernel.function("sys_open")发生成内核函数sys_open被系统中的thread
+调用的时候. 如果想指向函数的返回, 可以在事件语句的后面加上.return如:
+kernel.function("sys_open").return
+
+当宣言一个探针事件的时候, 你可以使用(*) 做为一个通配符. 你也可以跟踪内核源文件中的
+一个函数的entry或exit. 考虑如下的例子:
+\starttyping
+probe kernel.function("*@net/socket.c") { }
+probe kernel.function("*@net/socket.c").return { }
+\stoptyping
+
+这个例子的分别监控了net/socket.c 中的所有的函数entry与exit. 注意由于handler是空的,
+所以没有信息会被收集和输出.
+
+\item [kernel.trace("tracepoint")]
+
+tracepoint的静态探针. 最近kernels(2.6.0 and newer) 包括一些特别的内核事件诊断.
+这些事件使用tracepoint 进行静态标记. 一个\st 中可以用到的例子是
+kernel.trace("kfree_skb")这个是每一次内核中network buffer  被释放的时候.
+
+\item [module("module").function("function")]
+
+允许你监控linux kernel 模块中的函数, 如:
+\starttyping
+probe module("ext3").function("*") { }
+probe module("ext3").function("*").return { }
+\stoptyping
+这个例子分别监控ext3 模块中的所有的函数的entry与exit.
+
+
+\stopitemize
+
+
+\subsubsection{异步事件}
+
+异步事件并不是指代码中特定的指令或位置. 这是主要由一系列由记数器, 定时器以及相似的结构
+组成的探针.
+
+
+\startitemize
+\item  [begin]
+
+指向\st session 启动. 因此脚本一运行就执行.
+
+\item [end]
+
+\st session结束.
+
+\item [timer events]
+
+事件指向的handler会被定期执行.
+
+\starttyping
+probe timer.s(4)
+{
+  printf("hello world\n")
+}
+\stoptyping
+这个探针会4s 输出一次.
+还有下面的事件:
+\startitemize
+\item  timer.ms(milliseconds)
+\item  timer.us(microseconds)
+\item  timer.ns(nanoseconds)
+\item  timer.hz(hertz)
+\item  timer.jiffies(jiffies)
+\stopitemize
+
+当与其它的探针相结合的时候, 定时器事件可以让你得到周期性的更新并且可以看出信息
+每一次是如何变化的.
+
+
+\stopitemize
+
+
+
+
+
+
+
+
+
+\section{基础的\st 句柄结构}
+\st 的句柄支持几种基本的结构.
+大多数这些处理结构的语法接近于C, awk. 这一节介绍几种常有的handler 结构.
+这将有助于你编写简单的\ss.
+
+
+\subsection{变量}
+在handler中可以自由地使用变量. 简单地选择一个变量名, 并把一个函数的返回值或
+一个表达式给它, 并且可以在一个表达式中使用它. \st 会自动根据它的值的类型
+判断它是一个字符还是一个整数. 比如: 你使用变量foo 表示gettimeofday_s()(形如:
+foo = gettimeofday_s()), 这样foo 会被识别为一个数字, 可以在printf() 中能过
+格式符(\%d) 打印出来.
+
+注意默认的情况下, 变量只能在当前的probe中使用了. 这意味着变量在每一个probe 的
+运行中被初始化, 使用, 销毁. 如果要在probe 之间使用一个变量, 要在probes 之外通过
+\bold{global}进行申明.
+
+\starttyping
+global count_jiffies, count_ms
+probe timer.jiffies(100) { count_jiffies ++ }
+probe timer.ms(100) { count_ms ++ }
+probe timer.ms(12345)
+{
+  hz=(1000*count_jiffies) / count_ms
+  printf ("jiffies:ms ratio %d:%d => CONFIG_HZ=%d\n",
+    count_jiffies, count_ms, hz)
+  exit ()
+}
+\stoptyping
+上面的代码通过定时器统计jiffies和milliseconds, 然后直接计算出内核的CONFIG_HZ 设置值.
+global 语句允许脚本使用变量count_jiffies和count_ms可以被probe timer.ms(12345) 使用.
+
+符号++ 用于变量的值自增1. 下面的代码中count_jiffies 用于自增1每100 jiffies.
+\starttyping
+probe timer.jiffies(100) { count_jiffies ++ }
+\stoptyping
+在这个例子中, \st 把count_jiffies 理解为一个整数. 因为没有这个变量没有初始化, 所以
+默认初始化为0.

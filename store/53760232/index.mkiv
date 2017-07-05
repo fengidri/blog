@@ -1,0 +1,95 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Title: cross compile python
+%Class:
+%Post:1
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+python 的 cross 编译最大的不同在于, python 会先编译出一个小程序 Parser/pgen, 后续的编译过程中要使用这个程序.
+所以我们要有一个运行于 HOST 的 Parser/pgen.
+
+所以我们创建了两个目录  build-pc, build-mips.
+分别打开两个终端处理这两个目录下的编译, 防止出现干扰.
+
+\section{build-pc}
+没有什么特别的处理, 就如正常的编译一下样 \bold{../configure}. 之后直接 \bold{make Parser/pgen}. 我们只要这个.
+
+\section{build-mips}
+\starttyping
+# export PATH=/path/to/mipsel-gcc
+#####使用的是 openwrt 生成的 工具链, 要申明一下 STAGING_DIR.
+export STAGING_DIR=/path/to/openwrt/staging_dir/
+
+export TOOLS=mipsel-openwrt-linux
+export CC=$TOOLS-gcc
+export CXX=$TOOLS-g++
+export AR=$TOOLS-ar
+export RANLIB=$TOOLS-ranlib
+export ac_cv_file__dev_ptmx=no
+export ac_cv_file__dev_ptc=no
+export ac_cv_have_long_long_format=yes
+../configure --host=mipsel-linux --build=mipsel --disable-ipv6
+\stoptyping
+
+这样就可以 make 了, 但是要注意要指定一下 Parser/pgen.
+\starttyping
+make PGEN=../build-pc/Parser/pgen
+\stoptyping
+有的时候, 这个 make 的过程中可能会把 ../build-pc/Parser/pgen 使用 mips 下的 文件重新生成一个 mips 的 Parser/pgen.
+只要重新回去到 build-pc 下 删除 Parser/pgen 重新 make Parser/pgen 回来就可以了.
+当然, 如果你感觉这样比较麻烦可以把当前的 Makefile 里生成 pgen 的代码删除就可以了:
+
+\starttyping
+$(PGEN):        $(PGENOBJS)
+                $(CC) $(OPT) $(LDFLAGS) $(PGENOBJS) $(LIBS) -o $(PGEN)
+\stoptyping
+
+\section{install}
+安装的过程中, 会做一些检查, 但是这些检查的过程使用的 python 是系统里的会出错, 这一点比较讨厌.
+可以使用参数 -i 跳过这些错误;
+\starttyping
+make install -i
+\stoptyping
+
+\section{Modules}
+python 的主程序没有什么依赖, 但是其功能的扩展使用了很多模块, 官方的安装包里有就很多模块比如 zlib.
+这些模块的编译, 使用的是 setup.py. 并且默认的执行这个 setup.py 的还是系统环境里的 python.
+
+好吧, 这一点并不是什么大问题. 但是虽然 setup.py 有对于 cross comiple 进行支持, 但是支持的结果并不好.
+可能要手动修改一下才可以.
+
+setup.py 会对于库文件进行检查, 比如 zlib, 会先查找 libz.so 还有头文件. 一般性的安装, 自然是到系统里
+去找这些东西, cross comiple 的时候, 这个查找的路径, 就不一定可以正确的得到. 可以手动在函数
+detect_modules 里增加一下:
+\starttyping
+   def detect_modules(self):
+        # Ensure that /usr/local is always used
+        if not cross_compiling:
+            add_dir_to_list(self.compiler.library_dirs, '/usr/local/lib')
+            add_dir_to_list(self.compiler.include_dirs, '/usr/local/include')
+        if cross_compiling:
+            self.add_gcc_paths()
+        self.add_multiarch_paths()
+
+        l = "/path/openwrt-ramips/staging_dir/target-mipsel_24kec+dsp_uClibc-0.9.33.2/usr/lib/"
+        i = "/path/openwrt-ramips/staging_dir/target-mipsel_24kec+dsp_uClibc-0.9.33.2/usr/include"
+        self.compiler.include_dirs.append(i)
+        self.compiler.library_dirs.append(l)
+\stoptyping
+
+
+\section{buildroot}
+使用 buildroot 会比较简单, gcc 的环境变量之类的东西, 已经设置好了. 只要把 buildroot/output/host/usr/bin
+加入到 PATH 就可以了.
+
+buildroot 的所有的输出在 output 下面.
+
+output/host 用于保存运行于本机上的程序如工具链.  而 uclic 是放到 output/host/usr/ 下面的.
+
+images 下面的 rootfs.tar 是其打包的版本.
+host/target 下面保存的是个 rootfs.tar 的没有打包的版本, busybox 就是这下面.
+
+另: 修改了一些配置之后, 比如打开了 wchar, 要生效要先把 output/build 下面的 uclibc 删除了.
+
+\section{openwrt}
+openwrt 感觉是对于 buildroot 的包装, 包含了很多东西. 最后的结果是生成一个可以写入到设备上的镜像.
+我只要一个工具链的, 其实没有必要打开那些功能. 使用 buildroot 可能会更好一些.

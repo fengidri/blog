@@ -1,0 +1,76 @@
+%title: sort in redis
+%class: redis
+\section{sort}
+排序是计算机中一个长青树的话题. 但是也是一个相对比较麻烦的问题. 也是现实的情况下
+一个比较现实的要求.
+
+其排序的实现是使用NetBsd 里的快速排序算法的实现. 其实在c 的标准库<stdlib.h> 中也
+是带有这个算法的实现的.
+
+要进行排序先要申请一段内存空间来保存一个list. 考虑到要比较的值与要使用的值并不一
+定相同, 一般要先构造成结构体.
+那么结构体之间的比较可能还要有一个比较函数.是吧! 不然怎么比较呢?
+
+
+\starttyping
+@a:      容器指针
+@n:      容器数量
+@es:     容器中的元素大小
+@cmp:    比较函数
+@lrange: start
+@rrange: end
+void
+pqsort(void *a, size_t n, size_t es,
+    int (*cmp) (const void *, const void *), size_t lrange, size_t rrange)
+{
+    _pqsort(a,n,es,cmp,((unsigned char*)a)+(lrange*es),
+                       ((unsigned char*)a)+((rrange+1)*es)-1);
+}
+\stoptyping
+
+上面的函数是对于_pqsort 的包装. 这里看出一个有意思的事件. 对于容器中的元素的定位
+不是使用引用元素的结构体的方法. 而是使用char * 加上元素的大小进行偏移. 这样做的
+目的应该是为了提高可以移植性. 我们可以看到这两个函数都是在pqsort.c 文件中. 这个
+文件中的所有代码就是为了实现sort而实现的.
+
+注意这个函数实现的是从小到大的排序.
+\starttyping
+static void
+_pqsort(void *a, size_t n, size_t es,
+    int (*cmp) (const void *, const void *), void *lrange, void *rrange)
+\stoptyping
+
+pqsort.c 中一些宏还有一两个辅助函数都是为了与_pqsort 连系很大的.
+\startitemize
+\item  med3: 取中间值
+\starttyping
+static inline char *
+med3(char *a, char *b, char *c,
+    int (*cmp) (const void *, const void *))
+{
+
+	return cmp(a, b) < 0 ?
+	       (cmp(b, c) < 0 ? b : (cmp(a, c) < 0 ? c : a ))
+              :(cmp(b, c) > 0 ? b : (cmp(a, c) < 0 ? a : c ));
+}
+\stoptyping
+
+\stopitemize
+
+可以看一下_pqsort 的代码.
+大体上可以看到如下的信息:
+\startitemize
+\item  使用goto实现的循环
+\item  当前n 少于 7 时, 特殊处理. 还没明白为什么特殊处理. 但是这种情况下好像是没
+有处理lrange, 与rrange.
+\stopitemize
+
+源代码如下:
+
+这个算法的实现不是简单的快速排序, 是与冒泡排序进行混合的. 当要排序的元素的个数小
+于7时. 使用冒泡排序. 否则使用快速排序把数据分成几组之后再进行排序.
+
+lrange 与rrange  看来是redis 做的修改了.
+
+
+注意那个for循环是就是快速排序的核心算法的实现.

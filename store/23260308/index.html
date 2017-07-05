@@ -1,0 +1,171 @@
+<p></p>
+
+<p>
+    <ul>
+
+        <li>{HTTP header field name}cqh:
+打印客户请求头域. 比如: <b>%<{Accept-Language}cqh></b>会打印出 <b>Accept-Language:</b>请求头.
+
+        <li>{HTTP header field name}pqh: 打印代理的请求头域.
+
+        <li>{HTTP header field name}psh: 打印代理的响应的头域.
+
+        <li>{HTTP header field name}ssh: 打印服务器响应的头域.
+
+        <li>{HTTP header field name}cssh: 打印缓存响应的头域.
+
+        <li>caun: 客户端身份验证的用户名, RFC931/识别查找客户的用户名。
+
+        <li>cfsc:客户端完成状态代码;取决于客户端到 ATS 的请求是否成功完成(FIN)或中断(INTR)。
+
+        <li>chi: 客户端的主机的IP地址
+
+        <li>chih: 十六进制客户端的主机的IP地址
+
+        <li>hii: 这是连接的ip 地址, 也就是客户端的连接ip
+
+        <li>hiih: 十六进制连接的ip 地址
+
+        <li>chp: 客户端端口
+
+        <li>cqbl: 客户端请求的body 长度
+
+        <li>cqhl: 客户端请求的头长度
+
+        <li>cqhm: 客户端请求方法
+
+        <li>cqhv: 客户端请求HTTP版本
+
+        <li>cqtd: 客户端请求时间戳. 以yyyy-mm-dd 的格式输出请求的时间.
+
+        <li>cqtn: Netscape timestamp 格式 输出请求的时间
+
+        <li>cqtq: 以毫秒输出客户端请求时间戳
+
+        <li>cqts: Squid format 请求时间戳.
+
+        <li>cqtt: 客户端请求时间戳. 输出为 hh:mm:ss, 比如: 16:01:19
+
+        <li>cqtr: tcp 重用状态, 指出是否使用一个已有的tcp 连接.
+
+        <li>cqssl: 表明客户请求连接是不是基于 SSL.
+
+        <li>cqssr:SSL session/ticket 的重用状态
+
+        <li>cqssv: ssl 的 SSL/TLS 版本.
+
+        <li>cqssc: ATS 的与客户端会话使用的 cipher
+
+        <li>cqtx: 用户的HTTP请求行.
+<pre>
+GET http://www.company.com HTTP/1.0
+</pre>
+
+在 代理模式下, ATS 会打印 重写/map 后的URL.</p>
+
+<p>
+        <li>cqu: 请求的 URL
+
+        <li>cquc: 请求的 URL, 不同于 <b>cqu</b>, 对于空白和一些不能传递给统计工具的特殊字符进行编码.
+
+        <li>cqup: 请求的路径; 包括参数部分.
+
+        <li>cqus: 请求的URL 方案.
+
+        <li>cquuc: 没有被 remap 的URL
+
+        <li>cquup: 没有被remap 的URL path.
+
+        <li>cquuh: 没有被remap 的 URL host.
+
+        <li>cluc: 针对于用户请求, 用于查找的缓存 URL 或 cache key.
+
+        <li>crat: 在源站有指定的情况下的重试间隔时间(秒)
+
+        <li>crc: 缓存的状态码, 显示缓存是如何响应请求的(<b>HIT</b>, <b>MISS</b>).
+
+        <li>chm: 缓存命中状态. 指出缓存是由那哪一级进行输出的. 比如是一个 RAM 缓存还是一个 磁盘缓存. 以后可能会支持更多的选项,
+但是目前只支持<b>HIT_RAM</b>和 <b>HIT_DISK</b>.
+
+        <li>csscl: 缓存的从源站响应长度
+
+        <li>csshl: 缓存的从源站响应头的长度.
+
+        <li>csshv: 缓存的响应 HTTP 版本(1.0, 1.1 ..)
+
+        <li>csssc: 从源站缓存的 HTTP 响应状态码.
+
+        <li>cwr: 缓存的写入结果: (-, WL_MISS, INTR, ERR or FIN)
+
+        <li>cwtr: 转换后的缓存写入结果
+
+        <li>fsiz: The size of the file (n bytes) as seen by the origin server.
+
+        <li>{Milestone field name}ms: 请求中的一个阶段的时间. 可以通过<b>TSHttpTxnMilestoneGet()</b>得到所有阶段的名字.
+
+        <li>{Milestone field name1-Milestone field name2}msdms: 两个阶段的时间差.
+
+        <li>pfsc: 代理结束的状态码. 指出 ATS 到源站的请求状态(<b>FIN</b>, <b>INTR</b>, <b>TIMEOUT</b>).
+
+        <li>phn: 生成日志条目的ATS 主机名。
+
+        <li>phi: 生成日志条目的 ATS IP.
+
+        <li>phr: 代理层级路线; ATS 用于取回资源的路由
+
+        <li>php: ATS 服务端口
+
+        <li>piid:
+The plugin ID for the transaction. This is set for plugin driven transactions via <b>TSHttpConnectWithPluginId()</b>.
+
+        <li>pitag:
+The plugin tag for the transaction. This is set for plugin driven transactions via <b>TSHttpConnectWithPluginId()</b>.
+
+        <li>pqbl: 代理到源站的请求body 长度.
+
+        <li>phhl: 代理到源站的请求头长度.
+
+        <li>pqsi: 请求的代理服务器 IP
+
+        <li>pqsn: 代理请求的服务器名.
+
+        <li>pscl: ATS 响应到客户端的长度.
+
+        <li>psct: 由于响应头指定的文件类型, 比如<b>img/gif</b>.
+
+        <li>pshl: ATS 响应头的长度.
+
+        <li>psql: Squid 格式的响应长度
+
+        <li>pssc: ATS 给客户端响应的状态码.
+
+        <li>shi: 通过DNS 查找得到的 IP 地址. The IP address resolved from the DNS name lookup of the host in the request. For hosts with multiple IP addresses, this field records the IP address resolved from that particular DNS lookup.
+This can be misleading for cached documents. For example: if the first request was a cache miss and came from IP1 for server S and the second request for server S resolved to IP2 but came from the cache, then the log entry for the second request will show IP2.
+
+        <li>shn: 源站的 hostname.
+
+        <li>sscl: 从源站到ATS 响应长度
+
+        <li>sshl: 源站到 ATS 的响应头长度.
+
+        <li>sshv: 服务响应的 HTTP 版本.(1.0, 1.1, ... )
+
+        <li>sssc: 从源站到 ATS 的响应状态码.
+
+        <li>stms: 到源站的花费的时间(毫秒); 这个时间是指从连接建立到连接关闭的时间.
+
+        <li>stmsh: 类似于 stms, 只是是十六进制
+
+        <li>stmsf: 与 stms 相似, 只是以秒为单位的浮点数. stms 为1500, stmsf 为 1.5
+
+        <li>sts: 与 stms 相似, 只是以秒为单位的整数. stms 为1500, sts 为 1
+
+        <li>ttms: 处理客户端请求的用时(毫秒). 从客户端与ATS 建立连接, 到 ATS 发送最后一个响应的字节
+给用户.
+
+        <li>ttmsh: ttmsh 的十六进制
+
+        <li>ttmsf: 以秒为单位的浮点数.
+
+        <li>tts: 以秒为单位的int.
+    </ul></p>

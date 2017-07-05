@@ -1,0 +1,148 @@
+<p></p>
+
+<p>拥塞控制算法会在tcp_ack中被调用，如果是正常的ack(比如不是重复的，不是sack等等)就会进入拥塞控制算法。</p>
+
+<h3></h3>
+<p>
+    <ul>
+
+        <li>cong_avoid: 在收到 ack 的时间调用并且 cwnd 可以增长的时候. 等同于 tcp.cc 中的 opencwnd.
+ack is the number of bytes that are acknowledged in the latest acknowledgment;
+rtt is the the rtt measured by the latest acknowledgment;
+in_flight is the packet in flight before the latest acknowledgment;
+good_ack is an indicator whether the current situation is normal (no duplicate ack, no loss and no SACK). Value: 1 for normal, 0 for dubious</p>
+
+<p>
+        <li>ssthresh: 在 tcp 检测到一个丢包的时候被调用. 它会返回慢启动的阈值;
+
+        <li>min_cwnd: 同上也是在丢包的时候触发, 它会返回拥塞窗口. (对于许多的算法而言, 这等于 ssthresh).
+当探测到丢包, min_cwnd 会在 ssthresh 之后被调用. 有一个算法可能会把 min_cwnd 设置地小于 ssthresh.
+如果是这样, 就会在恢复的过程中使用慢启动算法.</p>
+
+<p>
+        <li>undo_cwnd: 当发现一个错误的丢包探测之后调用.
+
+        <li>rtt_sample: 在新得到一个 RTT 的抽样的情况下调用. 这会主要用于那些基于延时的拥塞算法. 这些算法使用精确的
+时间, usrtt 是 RTT 以 microsecond(us) 为单位的值.
+
+        <li>set_state: 在拥塞状态发生变化的时候被调用.
+ netstate 是将要进入的状态的编码. 这用于通知拥塞算法, 也被一些算法用于关闭他们在恢复过程中的
+ 一些特殊的控制.
+ 
+    <ul>
+
+        <li>TCP_CA_Open: normal state
+ 
+        <li>TCP_CA_Recovery: Loss Recovery after a Fast Transmission
+ 
+        <li>TCP_CA_Loss: Loss Recovery after a Timeout.
+
+    </ul>
+ (The following two states are not effective in TCP-Linux but is effective in Linux)
+ 
+    <ul>
+
+        <li>TCP_CA_Disorder: duplicate packets detected, but haven't reach the threshold. So TCP shall assume that packet reordering is happening.
+ 
+        <li>TCP_CA_CWR: the state that congestion window is decreasing (after local congesiton in NIC, or ECN and etc).
+
+    </ul></p>
+
+<p>
+        <li>cwnd_event: 当一个控制算法可能关注的事件发生的时候调用,
+ ev 是如下的拥塞事件:
+ 
+    <ul>
+
+        <li>CA_EVENT_FAST_ACK: An acknowledgment in sequence is received;
+ 
+        <li>CA_EVENT_SLOW_ACK: An acknowledgment not in sequence is received;
+ 
+        <li>CA_EVENT_TX_START: first transmission when no packet is in flight
+ 
+        <li>CA_EVENT_CWND_RESTART: congestion window is restarted
+ 
+        <li>CA_EVENT_COMPLETE_CWR: congestion window recovery is finished.
+ 
+        <li>CA_EVENT_FRTO: fast recovery timeout happens
+ 
+        <li>CA_EVENT_LOSS: retransmission timeout happens
+
+    </ul></p>
+
+<p>
+        <li>pkts_acked: 当有一些新的 packets 被 ack 的时候调用. num_acked 被这个 ack acked 的 packets 的数量.
+last(microsecond) 是最后一个被 acked 的 packet 发出去的时间.
+如果是 0, 意味着, 被 ack 的包 没有用于统计信息.</p>
+
+<p>
+        <li>release: 当连接结束的时间调用. 如果拥塞算法有分配一些内存, 要进行释放.
+    </ul></p>
+
+<p><pre>
+struct tcp_congestion_ops {
+         struct list_head        list;
+         unsigned long flags;
+
+         /* initialize private data (optional) */
+         void (*init)(struct sock *sk);                    // 初始化
+         /* cleanup private data  (optional) */
+         void (*release)(struct sock *sk);                  // 清除数据
+
+         /* return slow start threshold (required) */
+         u32 (*ssthresh)(struct sock *sk);                // 返回慢开始门限
+         /* lower bound for congestion window (optional) */
+         u32 (*min_cwnd)(const struct sock *sk);          // 拥塞窗口最小值
+         /* do new cwnd calculation (required) */
+         void (*cong_avoid)(struct sock *sk, u32 ack, u32 in_flight);  // 计算新的拥塞窗口
+         /* call before changing ca_state (optional) */
+         void (*set_state)(struct sock *sk, u8 new_state); // 设置拥塞状态
+         /* call when cwnd event occurs (optional) */
+         void (*cwnd_event)(struct sock *sk, enum tcp_ca_event ev);  // 拥塞事件发生时候处理
+         /* new value of cwnd after loss (optional) */
+         u32  (*undo_cwnd)(struct sock *sk);  // 丢包之后，拥塞窗口新的值
+         /* hook for packet ack accounting (optional) */
+         void (*pkts_acked)(struct sock *sk, u32 num_acked, s32 rtt_us); // 包的ack计数器
+         /* get info for inet_diag (optional) */
+         void (*get_info)(struct sock *sk, u32 ext, struct sk_buff *skb); //
+
+         char            name[TCP_CA_NAME_MAX];
+         struct module   *owner;
+};
+</pre>
+</p>
+
+<h3>tcp_slow_start</h3>
+<p>tcp_slow_start这个方法(基本上每种拥塞控制算法都会调用它)，
+这个方法主要是处理slow start，而内核中的slow start是这样子的，
+接收一个ack，snd_cwnd就会加1，然后当cwnd大于设置的拥塞窗口阀值snd_ssthresh的时候，
+就会进入拥塞避免状态。</p>
+
+<p>而在发送数据包的时候，会判断
+in_flight(可以认为是发送还没确认的数据包，它等于发送未确认的数据包－sack的数据段－丢失的数据段＋重传的数据)
+是否大于snd_cwnd,如果大于等于则不会发送数据，如果小于才会继续发送数据。</p>
+
+<h3>ssthresh</h3>
+<p>
+    <ul>
+
+        <li>默认的情况下有一个很大的值, 内核用于判断是不是处于初始化的 slowstart.
+
+        <li>加载模块的时候, 可以传递一个制定的值.
+
+        <li>在 slow start 的过程中会调整这个值.
+    </ul></p>
+
+<p>默认的情况下开始了 hystart, 这个选项, 所以在 cwnd 大于 hystart_low_window 的时时候,
+才开始把 ssthresh 的值从默认的大值进行调整到, 当前的 cwnd.</p>
+
+<h3>测试</h3>
+<p>
+    <ul>
+
+        <li>717 -- 1136640
+
+        <li>850 -- 1119232
+
+        <li>900 -- 1152000
+    </ul></p>

@@ -1,0 +1,165 @@
+<p></p>
+
+<h3>window.performance</h3>
+<p>这是一个新的浏览器接口, 可以用于分析前端性能.
+下面分析这个对象的属性.</p>
+
+<h4>timing</h4>
+<p>window.performance.timing 属性的类型是:
+<pre>
+interface PerformanceTiming {
+  readonly attribute unsigned long long navigationStart;
+  readonly attribute unsigned long long unloadEventStart;
+  readonly attribute unsigned long long unloadEventEnd;
+  readonly attribute unsigned long long redirectStart;
+  readonly attribute unsigned long long redirectEnd;
+  readonly attribute unsigned long long fetchStart;
+  readonly attribute unsigned long long domainLookupStart;
+  readonly attribute unsigned long long domainLookupEnd;
+  readonly attribute unsigned long long connectStart;
+  readonly attribute unsigned long long connectEnd;
+  readonly attribute unsigned long long secureConnectionStart;
+  readonly attribute unsigned long long requestStart;
+  readonly attribute unsigned long long responseStart;
+  readonly attribute unsigned long long responseEnd;
+  readonly attribute unsigned long long domLoading;
+  readonly attribute unsigned long long domInteractive;
+  readonly attribute unsigned long long domContentLoadedEventStart;
+  readonly attribute unsigned long long domContentLoadedEventEnd;
+  readonly attribute unsigned long long domComplete;
+  readonly attribute unsigned long long loadEventStart;
+  readonly attribute unsigned long long loadEventEnd;
+};
+</pre>
+</p>
+
+<p><img src=http://www.biaodianfu.com/wp-content/uploads/2013/05/window.performance.timing.jpg >
+
+    <ul>
+
+<li><b>navigationStart</b>&nbsp;&nbsp;&nbsp;&nbsp;浏览器完成卸载前一个文档的时间（也就是准备加载新页面的那个起始时间）。如果没有前一个文档，那么就返回timing.fetchStart的值。似乎只有Chrome非常严格遵守了此草案，即不把刷新页面以及一个标签页输入地址到指定页面视为发生文档的卸载。
+
+<li><b>unloadEventStart</b>&nbsp;&nbsp;&nbsp;&nbsp;如果前一个文档和当前文档同源，返回前一个文档发生unload事件前的时间。如果没有前一个文档或不同源则返回0。
+
+<li><b>unloadEventEnd</b>&nbsp;&nbsp;&nbsp;&nbsp;如果前一个文档和当前文档同源，返回前一个文档发生unload事件的时间。如果没有前一个文档或不同源则返回0。如果，发生了HTTP重定向或者类似的事情。并且从导航开始中间的每次重定向，并不都和当前文档同域的话则返回0。
+
+<li><b>redirectStart</b>&nbsp;&nbsp;&nbsp;&nbsp;如果发生了HTTP重定向或者类似的事情，并且从导航开始中间的每次重定向都和当前文档同域的话就返回开始重定向的timing.fetchStart的值。其他情况则返回0。
+
+<li><b>redirectEnd</b>&nbsp;&nbsp;&nbsp;&nbsp;如果发生了HTTP重定向或者类似的事情，并且从导航开始中间的每次重定向都和当前文档同域的话就返回最后一次重定向，接收到最后一个字节数据后的那个时间。其他情况则返回0。
+
+<li><b>fetchStart</b>&nbsp;&nbsp;&nbsp;&nbsp;如果一个新的资源（这里是指当前文档）获取被发起或类似的事情发生则fetchStart必须返回用户代理开始检查其相关缓存的那个时间，其他情况则返回开始获取该资源的时间。
+
+<li><b>domainLookupStart</b>&nbsp;&nbsp;&nbsp;&nbsp;返回用户代理对当前文档所属域进行DNS查询开始的时间。如果此请求没有DNS查询过程，如长连接、资源cache、甚至是本地资源等那么就返回fetchStart的值。
+
+<li><b>domainLookupEnd</b>&nbsp;&nbsp;&nbsp;&nbsp;返回用户代理对结束对当前文档所属域进行DNS查询的时间。如果此请求没有DNS查询过程，如长连接、资源cache、甚至是本地资源等. 那么就返回fetchStart的值。
+
+<li><b>connectStart</b>&nbsp;&nbsp;&nbsp;&nbsp;返回用户代理向服务器服务器请求文档开始建立连接的那个时间，如果此连接是一个长连接又或者直接从缓存中获取资源（即没有与服务器建立连接）则返回domainLookupEnd的值。
+
+<li><b>connectEnd</b>&nbsp;&nbsp;&nbsp;&nbsp;返回用户代理向服务器服务器请求文档建立连接成功后（注意，不是断开连接的时间）的那个时间。如果此连接是一个长连接又或直接从缓存中获取资源 （即没有与服务器建立连接）,则返回domainLookupEnd的值。如果连接建立失败而用户代理进行重连则connectStart和connectEnd则应该是这次重连的相关的值。其中connectEnd必须包括建立连接的时间以及SSH握手协议和SOCKS认证等时间。
+
+<li><b>secureConnectionStart</b>&nbsp;&nbsp;&nbsp;&nbsp;可选特性。用户代理如果没有对应的东东就要把这个设置为undefined，如果有这个东东并且是HTTPS协议那么就要返回开始SSL握手的那个时间。如果不是HTTPS那么就返回0。
+
+<li><b>requestStart</b>&nbsp;&nbsp;&nbsp;&nbsp;返回从服务器、缓存、本地资源等开始请求文档的时间。如果请求中途连接断开了并且用户代理进行了重连并重新请求了资源，那么requestStart就必须为这个新请求所对应的时间。
+
+<li><b>responseStart</b>&nbsp;&nbsp;&nbsp;&nbsp;返回用户代理从服务器、缓存、本地资源中接收到第一个字节数据的时间。
+
+<li><b>responseEnd</b>&nbsp;&nbsp;&nbsp;&nbsp;返回用户代理接收到最后一个字符的时间，和当前连接被关闭的时间中更早的那个。同样文档可能来自服务器、缓存、或本地资源。
+
+<li><b>domLoading</b>&nbsp;&nbsp;&nbsp;&nbsp;返回用户代理把其文档的“current document readiness”设置为“loading”的时候。（current document readiness 其实就是document.readyState API对应的状态。）
+
+<li><b>domInteractive</b>&nbsp;&nbsp;&nbsp;&nbsp;返回用户代理把其文档的“current document readiness”设置为“interactive”的时候。从标准来说domReady的状态为“interactive”时意味着文档解析结束了，因为标准中描述DOM树创建结束后第一件事就是把“current document readiness”设置为“interactive”。
+
+<li><b>domContentLoadedEventStart</b>&nbsp;&nbsp;&nbsp;&nbsp;返回文档发生DOMContentLoaded事件的时间。DOMContentLoad和DOMInteractive之间差了两个步骤，其中之一是所有open elements出栈，然后去看看待运行的script list中是否有需要运行的脚本，如果有则执行，一直到这个列表为空了再触发DOMContentLoad.。需要主的是这个待运行脚本列表。有些可能在不同浏览器中被加入进去的行为可能不同。比如 document.write写入文档流的脚本，以及script deferr 的脚本.. 所以我们应该知道deferr的脚本也是要他推迟domContentLoaded的，也就是我们最常用的所谓domReady。
+
+<li><b>domContentLoadedEventEnd</b>&nbsp;&nbsp;&nbsp;&nbsp;文档的DOMContentLoaded事件的结束时间。所谓事件结束的时间是指如果DOMContentLoaded事件被开发者注册了回调事件，那么这个时间的End时间减去Start的时间就会是这个回调执行的大概事件。当然居于部分浏览器实现可能会有2-3ms的误差，但是这个时间基本可以忽略不计。类似的情况还有后面的.loadEventStart,End，即 window.onload 所有回调所消耗的时间。
+
+<li><b>domComplete</b>&nbsp;&nbsp;&nbsp;&nbsp;返回用户代理把其文档的“current document readiness”设置为“complete”的时候。如果current document readiness的某个状态被多次触发那么对应的domLoading, domInteractive, domContentLoadedEventStart, domContentLoadedEventEnd and domComplete这些对应的API返回的时间就应该是这个状态第一次触发的时间。
+
+<li><b>loadEventStart</b>&nbsp;&nbsp;&nbsp;&nbsp;文档触发load事件的时间。如果load事件没有触发那么该接口就返回0。
+
+<li><b>loadEventEnd</b>&nbsp;&nbsp;&nbsp;&nbsp;文档触发load事件结束后的时间。如果load事件没有触发,那么该接口就返回0。
+    </ul></p>
+
+<h4>navigation</h4>
+<p><pre>
+interface PerformanceNavigation {
+  const unsigned short TYPE_NAVIGATE = 0;
+  const unsigned short TYPE_RELOAD = 1;
+  const unsigned short TYPE_BACK_FORWARD = 2;
+  const unsigned short TYPE_RESERVED = 255;
+  readonly attribute unsigned short type;
+  readonly attribute unsigned short redirectCount;
+};
+</pre>
+</p>
+
+<p><b>type</b>返回值应该是0,1,2 中的一个.分别对应三个枚举值:
+
+    <ul>
+
+        <li>TYPE_NAVIGATE (用户通过常规导航方式访问页面，比如点一个链接或者一般的get方式)
+
+        <li>TYPE_RELOAD (用户通过刷新，包括JS调用刷新接口等方式访问页面)
+
+        <li>TYPE_BACK_FORWARD (用户通过后退按钮访问本页面)
+
+        <li>TYPE_RESERVED (保留，其他非前三种方式访问)
+    </ul></p>
+
+<p><b>redirectCount</b>一个只读属性，返回当前页面是几次重定向才过来的。
+但是这个接口有同源策略限制，即仅能检测同源的重定向。</p>
+
+<h4>resource timing</h4>
+<p>
+    <ul>
+
+        <li>getEntries
+
+        <li>getEntriesByName
+
+        <li>getEntriesByType
+    </ul></p>
+
+<p>三个方法可以得到 resource 的 timing.
+一个页面的渲染除了 document 对应的 html 之外还有很多别的 request. 这些 request 也有对应
+的 timing 对象. 这三个方法可以返回其它的 timing. resource timing 有 type 与 name 属性,
+所以可以使用 ByName 与 ByType 两个方法. 这里的 name 就是 resource 的 url.</p>
+
+<h4>PerformanceResourceTiming</h4>
+<p>
+    <ul>
+
+<li><b>name:</b>&nbsp;&nbsp;&nbsp;&nbsp;这个属性返回解析的 url, 并且不可改, 即使重定向到不同的 url.
+
+<li><b>entryType:</b>&nbsp;&nbsp;&nbsp;&nbsp;必须返回"resource"
+
+<li><b>startTime:</b>&nbsp;&nbsp;&nbsp;&nbsp;返回 resource fetching 时间, 如果是重定向或相当的行为, 并且所有的
+重定向或相当的行为的源与当前 document 的源相同, 这个属性返回的值与 redirectStart 的值相同.
+其它的情况下返回的值与 fetchStart 的值相同.
+
+<li><b>duration:</b>&nbsp;&nbsp;&nbsp;&nbsp;返回 responseEnd 与 startTime 之间的差.
+    </ul></p>
+
+<p><pre>
+interface PerformanceResourceTiming : PerformanceEntry {
+    readonly    attribute DOMString           initiatorType;
+    readonly    attribute DOMString           nextHopProtocol;
+    readonly    attribute DOMHighResTimeStamp workerStart;
+    readonly    attribute DOMHighResTimeStamp redirectStart;
+    readonly    attribute DOMHighResTimeStamp redirectEnd;
+    readonly    attribute DOMHighResTimeStamp fetchStart;
+    readonly    attribute DOMHighResTimeStamp domainLookupStart;
+    readonly    attribute DOMHighResTimeStamp domainLookupEnd;
+    readonly    attribute DOMHighResTimeStamp connectStart;
+    readonly    attribute DOMHighResTimeStamp connectEnd;
+    readonly    attribute DOMHighResTimeStamp secureConnectionStart;
+    readonly    attribute DOMHighResTimeStamp requestStart;
+    readonly    attribute DOMHighResTimeStamp responseStart;
+    readonly    attribute DOMHighResTimeStamp responseEnd;
+    readonly    attribute unsigned short      transferSize;
+    readonly    attribute unsigned short      encodedBodySize;
+    readonly    attribute unsigned short      decodedBodySize;
+    serializer = {inherit, attribute};
+};
+</pre>
+</p>

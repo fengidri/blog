@@ -1,0 +1,15 @@
+%Title: systemd tmp as tmpfs
+%Class: linux
+%Post:1
+ systemd总是会做很多事, 给我的感觉就是给用户做了很多决策.
+
+ 最近发现, systemd会自动把/tmp 做为tmpfs进行挂载. 即使你在fstab中
+ 没有进行设置.
+
+ 我不太喜欢这样啦. 一个关闭的方法是
+\starttyping
+systemctl mask tmp.mount
+\stoptyping
+
+
+

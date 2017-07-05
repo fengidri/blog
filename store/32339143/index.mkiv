@@ -1,0 +1,169 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Title: TCP - tcp_transmit_skb
+%Class: tcp
+%Post:1
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+发送一个 TCP 段都是通过 tcp_transmit_skb 实现的, 这个函数会给要发送的段构造 TCP 首部,
+然后调用网络层接口到 IP 层, 最终抵达网络设备.
+
+由于在成功发送到网络设备后会释放 SKB, 但是 tcp 必须要在收到 ACK 后才能释放数据, 所以在发送前
+会根据参数决定是否克隆还是复制一份SKB 用于发送.
+
+\section{参数}
+\startitemize
+\item skb: 要待发送的段
+\item clone_it: 标识发送前是克隆还是复制
+\item gfp_mask: 为克隆或复制 SBK 时分配的方式
+\stopitemize
+
+
+
+\starttyping
+/* This routine actually transmits TCP packets queued in by
+ * tcp_do_sendmsg().  This is used by both the initial
+ * transmission and possible later retransmissions.
+ * All SKB's seen here are completely headerless.  It is our
+ * job to build the TCP header, and pass the packet down to
+ * IP so it can do the same plus pass the packet off to the
+ * device.
+ *
+ * We are working here with either a clone of the original
+ * SKB, or a fresh unique copy made by the retransmit engine.
+ */
+static int tcp_transmit_skb(struct sock *sk, struct sk_buff *skb, int clone_it,
+			    gfp_t gfp_mask)
+{
+	const struct inet_connection_sock *icsk = inet_csk(sk);
+	struct inet_sock *inet;
+	struct tcp_sock *tp;
+	struct tcp_skb_cb *tcb;
+	struct tcp_out_options opts;
+	unsigned tcp_options_size, tcp_header_size;
+	struct tcp_md5sig_key *md5;
+	__u8 *md5_hash_location;
+	struct tcphdr *th;
+	int err;
+
+	BUG_ON(!skb || !tcp_skb_pcount(skb));
+
+	/* If congestion control is doing timestamping, we must
+	 * take such a timestamp before we potentially clone/copy.
+	 */
+	if (icsk->icsk_ca_ops->flags & TCP_CONG_RTT_STAMP)
+        // 如果拥塞控制要作时间采样, 则必须设置一个时间戳, 之后再克隆或拷贝报文
+        // Linux 支持多达十几种拥塞控制算法, 但并不每种算法都要作时间采样的,
+        // 因此在设置时间戳前行判断当前的拥塞控制算法是否要作时间采样
+		__net_timestamp(skb);
+
+    // 分析是克隆还是复制 skb
+	if (likely(clone_it)) {
+		if (unlikely(skb_cloned(skb)))
+			skb = pskb_copy(skb, gfp_mask);
+		else
+			skb = skb_clone(skb, gfp_mask);
+		if (unlikely(!skb))
+			return -ENOBUFS;
+	}
+
+
+	inet = inet_sk(sk);                  // 获取 INET 层
+	tp = tcp_sk(sk);                     // 获取 TCP 层
+	tcb = TCP_SKB_CB(skb);               // 获取 TCP 的私有控制块
+	memset(&opts, 0, sizeof(opts));
+
+	if (unlikely(tcb->flags & TCPCB_FLAG_SYN))
+		tcp_options_size = tcp_syn_options(sk, skb, &opts, &md5);
+	else
+		tcp_options_size = tcp_established_options(sk, skb, &opts,
+							   &md5);
+	tcp_header_size = tcp_options_size + sizeof(struct tcphdr); // 获取 TCP 首部长度
+
+    // 如果已发出未确认的数据包为0, 则只初始化拥塞控制, 并开始跟踪连接 RTT
+	if (tcp_packets_in_flight(tp) == 0)
+		tcp_ca_event(sk, CA_EVENT_TX_START);
+
+    // 在数据部头添加 TCP 首部, 长度即为之前得到的 tcp_header_size, 实际上移动 data 指针
+	skb_push(skb, tcp_header_size);
+	skb_reset_transport_header(skb);
+    // SKB 已经添加到发送队列中, 但是 SKB 并不知道自身是
+    // 哪个传输控制块, 因此此时要调用 skb_set_owner_w 设置 SKB 的宿主
+	skb_set_owner_w(skb, sk);
+
+    // 在报文中加入 TCP 首, 再设置一些 TCP
+	/* Build TCP header and checksum it. */
+	th = tcp_hdr(skb);
+    // 填充 TCP 首部的源端口, 目的端口, TCP 报文序号, 确诊序号, 以及标识位
+	th->source		= inet->sport;
+	th->dest		= inet->dport;
+	th->seq			= htonl(tcb->seq);
+	th->ack_seq		= htonl(tp->rcv_nxt);
+	*(((__be16 *)th) + 6)	= htons(((tcp_header_size >> 2) << 12) |
+					tcb->flags);
+
+	if (unlikely(tcb->flags & TCPCB_FLAG_SYN)) { // 设置 TCP 首部的接收窗口
+		/* RFC1323: The window in SYN & SYN/ACK segments
+		 * is never scaled.
+		 */
+		th->window	= htons(min(tp->rcv_wnd, 65535U));
+	} else {
+		th->window	= htons(tcp_select_window(sk));
+	}
+
+    // 设置紧急指针, 紧急数据标识位
+	th->check		= 0;
+	th->urg_ptr		= 0;
+
+	/* The urg_mode check is necessary during a below snd_una win probe */
+	if (unlikely(tcp_urg_mode(tp) && before(tcb->seq, tp->snd_up))) {
+		if (before(tp->snd_up, tcb->seq + 0x10000)) {
+			th->urg_ptr = htons(tp->snd_up - tcb->seq);
+			th->urg = 1;
+		} else if (after(tcb->seq + 0xFFFF, tp->snd_nxt)) {
+			th->urg_ptr = 0xFFFF;
+			th->urg = 1;
+		}
+	}
+
+	tcp_options_write((__be32 *)(th + 1), tp, &opts, &md5_hash_location);
+	if (likely((tcb->flags & TCPCB_FLAG_SYN) == 0))
+		TCP_ECN_send(sk, skb, tcp_header_size);
+
+    // 通过 TCP MD5 签名来保护 BGP 会话
+#ifdef CONFIG_TCP_MD5SIG
+	/* Calculate the MD5 hash, as we have all we need now */
+	if (md5) {
+		sk->sk_route_caps &= ~NETIF_F_GSO_MASK;
+		tp->af_specific->calc_md5_hash(md5_hash_location,
+					       md5, sk, NULL, skb);
+	}
+#endif
+
+    // 调用 IPv4 执行校验和接口send_check 计算校验和
+    // 在 TCP 中send_check 接口被初始化为 tcp_v4_send_check
+	icsk->icsk_af_ops->send_check(sk, skb->len, skb);
+
+    // 如果发送出去的段有 ACK 标识, 则要通知延时确认模块, 递减快速发送 ACK 的数量和同时停止
+    // 延时确认定时器
+	if (likely(tcb->flags & TCPCB_FLAG_ACK))
+		tcp_event_ack_sent(sk, tcp_skb_pcount(skb));
+
+    // 如果发送的 TCP 段有负载, 则检测拥塞窗口闲置是否超时, 并使其失效
+    // 同时记录发送 TCP 的时间, 根据最近接收段的时间确定本端延时确认是否进入 pingpong
+	if (skb->len != tcp_header_size)
+		tcp_event_data_sent(tp, skb, sk);
+
+	if (after(tcb->end_seq, tp->snd_nxt) || tcb->seq == tcb->end_seq)
+		TCP_INC_STATS(sock_net(sk), TCP_MIB_OUTSEGS);
+
+    // 调用发送接口 queue_xmit 发送报文, 如果失败则返回错误码
+    // 在 TCP 中此接口实现实现为 ip_queue_xmit
+	err = icsk->icsk_af_ops->queue_xmit(skb, 0);
+	if (likely(err <= 0))
+		return err;
+
+    // 发送失败的时候, 类似接收到显示的拥塞通知, 使拥塞控制进入 CWR 状态.
+	tcp_enter_cwr(sk, 1);
+
+	return net_xmit_eval(err);
+}
+\stoptyping

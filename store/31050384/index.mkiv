@@ -1,0 +1,166 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Title: nginx Upstream keepalive
+%Class: nginx
+%Post:1
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{keepalive}
+
+\starttyping
+Syntax:	keepalive connections;
+Default:	—
+Context:	upstream
+This directive appeared in version 1.1.4.
+\stoptyping
+
+用于指定每一个 worker 的 upstream 中可以缓存的长连接的数量.
+这个模块的存在是比较特别的与负载算法是相同的级别的.
+所以一个特别的地方在于, keepalive 与必须放到负载算法的后面.
+
+\section{数据结构}
+\starttyping
+typedef struct {
+    ngx_uint_t                         max_cached;   //最大缓存连接个数，由keepalive参数指定
+
+    ngx_queue_t                        cache; // 使用完了的连接
+    ngx_queue_t                        free;  // 从 cache 中取出来的, 正使用中的连接
+
+    ngx_http_upstream_init_pt          original_init_upstream;  // 记录原来的负载算法的 init_upstream
+    ngx_http_upstream_init_peer_pt     original_init_peer;      // 记录原来的负载算法的 init_peer
+
+} ngx_http_upstream_keepalive_srv_conf_t;
+\stoptyping
+
+从这个数据结构里可以看出来这个模块的特殊的地方. 这个模块要记录原来的负载算法模块的一些 init 函数.
+所以可以想像这个模块的特殊地位. 它是位于一般的负载算法模块与 upstream  之间的. 这个模块工作于 upstream 与
+负载算法之间. 所以在 upstream 配置的时候它必须位于负载算法的后面.
+
+\section{keepalive cmd}
+keepalive 命令的回调函数就体现了其特殊性.
+\starttyping
+static char *
+ngx_http_upstream_keepalive(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
+{
+    ......
+
+    if (kcf->original_init_upstream) {
+        return "is duplicate";
+    }
+
+    // 记录原来的 init_upstream
+    kcf->original_init_upstream = uscf->peer.init_upstream
+                                  ? uscf->peer.init_upstream
+                                  : ngx_http_upstream_init_round_robin;
+
+    uscf->peer.init_upstream = ngx_http_upstream_init_keepalive;
+
+    /* read options */
+
+    value = cf->args->elts;
+
+    n = ngx_atoi(value[1].data, value[1].len);
+
+    ........
+}
+\stoptyping
+
+\section{ connect }
+\starttyping
+ngx_int_t
+ngx_event_connect_peer(ngx_peer_connection_t *pc)
+{
+    ....
+
+    rc = pc->get(pc, pc->data);
+    if (rc != NGX_OK) {
+        return rc;
+    }
+
+    s = ngx_socket(pc->sockaddr->sa_family, SOCK_STREAM, 0);
+
+    ngx_log_debug1(NGX_LOG_DEBUG_EVENT, pc->log, 0, "socket %d", s);
+
+    ....
+}
+\stoptyping
+连接的过程中, 会在ngx_event_connect_peer 调用 get 回调, 而这个时候的 回调是 keepalive 中的
+ngx_http_upstream_get_keepalive_peer.
+
+这个函数中会调用 balancer 的 get 函数得到对应的 地址. 得到地址后, 会在 cache 中进行查找已经建立的连接找到的
+情况下返回 NGX_DONE.
+
+而在 ngx_event_connect_peer 中的返回值是如果是 NGX_OK 就会新的连接, 但是如果返回 NGX_DONE 就会直接返回.
+
+而调用 ngx_event_connect_peer 的函数中处理如下:
+
+\starttyping
+static void
+ngx_http_upstream_connect(ngx_http_request_t *r, ngx_http_upstream_t *u)
+{
+    .....
+
+    rc = ngx_event_connect_peer(&u->peer);
+
+    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                   "http upstream connect: %i", rc);
+
+    if (rc == NGX_ERROR) {
+        ngx_http_upstream_finalize_request(r, u,
+                                           NGX_HTTP_INTERNAL_SERVER_ERROR);
+        return;
+    }
+
+    u->state->peer = u->peer.name;
+
+    if (rc == NGX_BUSY) {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "no live upstreams");
+        ngx_http_upstream_next(r, u, NGX_HTTP_UPSTREAM_FT_NOLIVE);
+        return;
+    }
+    .....
+}
+
+\stoptyping
+
+get 函数的返回值有三种:
+\startitemize
+\item NGX_OK : 使用地址信息创建新的连接
+\item NGX_ERROR: 直接退出, 返回 500;
+\item NGX_DONE: ngx_event_connect_peer 直接返回, ngx_http_upstream_connect 使用已有的连接处理.
+\stopitemize
+
+以上的过程实现了对于连接的复用.
+
+
+\section{连接释放}
+在处理完成请求后, upstream 会调用 balancer 的 free 接口, 而这个接口在开启keepalive 的情况下是
+keepalive 的 ngx_http_upstream_free_keepalive_peer.
+
+\starttyping
+
+    if (ngx_queue_empty(&kp->conf->free)) { // 如果 cache 已经满了, 就把一个最旧的连接 close
+
+        q = ngx_queue_last(&kp->conf->cache);
+        ngx_queue_remove(q);
+
+        item = ngx_queue_data(q, ngx_http_upstream_keepalive_cache_t, queue);
+
+        ngx_http_upstream_keepalive_close(item->connection);
+
+    } else {
+        q = ngx_queue_head(&kp->conf->free);
+        ngx_queue_remove(q);
+
+        item = ngx_queue_data(q, ngx_http_upstream_keepalive_cache_t, queue);
+    }
+
+    item->connection = c;
+    ngx_queue_insert_head(&kp->conf->cache, q);
+
+    pc->connection = NULL;  // 最终这个连接没有被 close 就是因为这里.
+\stoptyping
+
+
+
+\section{参考}
+\goto{http://blog.csdn.net/lizhiqiang50/article/details/7551292}

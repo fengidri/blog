@@ -1,0 +1,43 @@
+<p>
+A VIO, or virtual IO, is a description of an IO operation that’s currently in progress. The VIO data structure is used by vconnection users to determine how much progress has been made on a particular IO operation and to re-enable an IO operation when it stalls due to buffer space issues. VIOs are used by vconnection implementors to determine the buffer for an IO operation, how much work to do on the IO operation, and which continuation to call back when progress on the IO operation is made.</p>
+
+<p>The TSVIO data structure itself is opaque, but it could be defined as follows:</p>
+
+<p><pre>
+typedef struct {
+    TSCont continuation;
+    TSVConn vconnection;
+    TSIOBufferReader reader;
+    TSMutex mutex;
+    int nbytes;
+    int ndone;
+} *TSVIO;
+</pre>
+</p>
+
+<p>The VIO functions below access and modify various parts of the data structure.
+
+    <ul>
+
+        <li>TSVIOBufferGet()
+
+        <li>TSVIOVConnGet()
+
+        <li>TSVIOContGet()
+
+        <li>TSVIOMutexGet()
+
+        <li>TSVIONBytesGet()
+
+        <li>TSVIONBytesSet()
+
+        <li>TSVIONDoneGet()
+
+        <li>TSVIONDoneSet()
+
+        <li>TSVIONTodoGet()
+
+        <li>TSVIOReaderGet()
+
+        <li>TSVIOReenable()
+    </ul></p>

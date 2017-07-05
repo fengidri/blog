@@ -1,0 +1,118 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Title: HTTP Transformation Plugins
+%Class: ats
+%Post:1
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\def\tp{Transform plugins}
+\def\vcon{VConnection}
+\def\trans{Transfromation}
+\def\ats{Traffic Server}
+
+\tp 可以用于检查或转换 HTTP 消息体内容. 比如:
+\startitemize
+\item   给 HTML 文档增加内容
+\item  压缩图片
+\item 病毒检查(在客户端白 POST 数据还有 服务器的数据)
+\item 内容过滤(过滤出特定条款或表达式的 HTML docuemnts)
+\stopitemize
+
+本文章解析了如何去编写\tp, 下面的例子会被详细讨论:
+\startitemize
+\item  \goto{The Sample Null Transform Plugin}{https://docs.trafficserver.apache.org/en/latest/sdk/http-transformation-plugin/sample-null-transformation-plugin.en.html}
+\item \goto{The Append-Transform Plugin}{https://docs.trafficserver.apache.org/en/latest/sdk/http-transformation-plugin/append-transform-plugin.en.html}
+\item \goto{The Sample Buffered Null Transform Plugin}{https://docs.trafficserver.apache.org/en/latest/sdk/http-transformation-plugin/sample-buffered-null-transformation-plugin.en.html}
+\stopitemize
+
+
+
+\section{Writing Content Transform Plugins}
+
+\tp 可以转换 HTTP 响应内存(如: images or HTML docuemnts) 还有 HTTP 请求内容
+(如 客户端的 POST 数据). 因为数据长度是可变的, 所以\tp 必然有一个机制可以
+从一个 buffer 传递到另一个 buffer, 同时还要检查数据流是不是结束了.
+这个机制通过虚拟连接(\vcon) 还有 虚拟IO 描述符支持.
+
+
+\vcon 是一个抽象的数据管道, 可以让用户不必了解底层的实现来实现
+对于读写进行操作.
+\trans 是一个特定类型的\vcon. 一个连接了一个输入数据源和一个输出数据槽.
+这个特性, 可以让它查看或修改经过它的所有的数据.
+
+多个\trans 也可以串联起来, 因此多个\trans 可以在相同的内存上进行操作.%TODO
+\vcon 的类型 \bold{TSVConn} 是\bold{TSCont} 的一个子类, 这意味着多个
+\vcon(或是\trans) 是其的一个延伸.
+多个\vcon 和\trans 之间可以交换事件, 通知对方读写状态是不是可用, 或者数据
+流结束了.
+
+一个VIO IO 描述符是一个系统运行中的描述符. 每一个\vcon 有一个关联的
+\bold{input VIO} 还有一个关联的\bold{output VIO}. 当VConnection 要传输数据
+给另一个时, 一个\vcon 的输入 VIO 是别一个\vcon 的输出 VIO. 一个 \vcon 的输入
+VIO 也是称为 \bold{write VIO}, 因为输入 VIO 指向\vcon 自身的写操作.
+相似的, 输入 VIO 也是称为\bold{read VIO}. 对于\trans 而言, 它被设计为
+沿一个方向转递数据. 其关系如下:
+
+\img{http://i4.tietuku.com/d7bc7e318fbc5195.jpg}
+
+\trans\ \vcon仅负责用于从输入缓冲器读取数据，将其转化，然后将其写入到输出缓冲区,
+因为\ats 把\trans 直接用于响应或请求的数据流.
+上流的\vcon 流入的数据写入到\trans 的输入 buffer. 如上图显示的, 一个\trans 和
+其VIO, 其输入的VIO 表示了 upstream \vcon 的写操作进度, \trans 输出 VIO
+指向了 write 到下一个\vcon 的进度. VIO 中\bold{nbytes} 表示要写入的总的数据量.
+\bold{ndone}值表示当前的进度或某个时间写入的 bytes.
+
+当你编写一个\tp 你必须了解\vcon 的运行情况.
+实现者重于实现一个\vcon, 其它用户只用知道如何去使用.
+最低限度, 一个\tp 创建一个位于数据流中的\trans, 同时必须能处理处理上游与
+下流的\vcon 发送给它的事件.
+用户要指出如何使用\vcon 来读写数据. 最起码, \trans 要输出数据.
+
+\section{Transformations}
+\subsection{VIOS}
+ The VIO data structure is used by VConnection users to determine how much
+ progress has been made on a particular IO operation, and to reenable an IO
+ operation when it stalls due to buffer space.
+
+ VConnection implementors use VIOs to determine the buffer for an IO operation,
+ how much work to do on the IO operation, and which continuation to
+ call back when progress on the IO operation is made.
+
+\bold{TSVIO} 数据结构自身是不透明的, 其定义可能如下:
+\starttyping
+typedef struct {
+   TSCont continuation;
+   TSVConn vconnection;
+   TSIOBufferReader reader;
+   TSMutex mutex;
+   int nbytes;
+   int ndone;
+} *TSVIO;
+\stoptyping
+
+
+
+
+
+\subsection{IO Buffers}
+
+
+\bold{IO buffer} 数据结构是\vcon 的抽象构建块.
+An IO buffer is composed of a list of buffer blocks which, in turn, point to buffer data.
+Both the buffer block (TSIOBufferBlock) and buffer data (TSIOBufferData) data structures
+are reference counted so they can reside in multiple buffers at the same time.
+This makes it extremely efficient to copy data from one IO buffer to another using TSIOBufferCopy,
+since Traffic Server only needs to copy pointers and adjust reference counts appropriately (instead of actually copying any data).
+
+The IO buffer abstraction provides for a single writer and multiple readers.
+In order for the readers to have no knowledge of each other,
+they manipulate IO buffers through theTSIOBufferReader data structure.
+Since only a single writer is allowed, there is no corresponding TSIOBufferWriter data structure.
+The writer simply modifies the IO buffer directly.
+
+
+
+
+
+
+
+

@@ -1,0 +1,13 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Title: 限制连接到服务端口
+%Class: tcp
+%Post:1
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+不允许新的连接进来的, 这个时间可以通过 iptables 来实现:
+\starttyping
+iptables -A INPUT -p tcp --tcp-flags SYN SYN --dport 8100  -j REJECT --reject-with tcp-reset
+\stoptyping
+这样, 会把到 8100 端口的新连接通过 tcp rset 给拒绝掉.
+如果没有  --reject-with tcp-reset  就只会有一个 ICMP 的包. 但是
+tcp 的连接还是会重试的. 只有收到 TCP 的 RESET 响应, tcp 连接才会立即断开.

@@ -1,0 +1,76 @@
+<p>
+ATS 中可以通过 traffic_line 这个工具得到 traffic_server
+的一些运行状态数据.</p>
+
+<p>这些数据通过 unix socket 从 traffic_server 得到.</p>
+
+<p>函数MgmtRecordGet@CoreAPIRemote.cc:485
+展示了通过 socket 得到参数的过程.
+<pre>
+TSError
+MgmtRecordGet(const char *rec_name, TSRecordEle * rec_ele)
+{
+  TSError ret;
+  void *val;
+
+  if (!rec_name || !rec_ele)
+    return TS_ERR_PARAMS;
+
+  rec_ele-&gt;rec_name = ats_strdup(rec_name);
+
+  // create and send request
+  ret = send_record_get_request(main_socket_fd, rec_ele-&gt;rec_name);
+  if (ret != TS_ERR_OKAY)
+    return ret;
+
+  // parse the reply to get record value and type
+  ret = parse_record_get_reply(main_socket_fd, &amp;(rec_ele-&gt;rec_type), &amp;val);
+  if (ret != TS_ERR_OKAY)
+    return ret;
+
+  // convert the record value to appropriate type
+  switch (rec_ele-&gt;rec_type) {
+  case TS_REC_INT:
+    rec_ele-&gt;int_val = *(TSInt *) val;
+    break;
+  case TS_REC_COUNTER:
+    rec_ele-&gt;counter_val = *(TSCounter *) val;
+    break;
+  case TS_REC_FLOAT:
+    rec_ele-&gt;float_val = *(TSFloat *) val;
+    break;
+  case TS_REC_STRING:
+    rec_ele-&gt;string_val = ats_strdup((char *) val);
+    break;
+  default:                     // ERROR - invalid record type
+    return TS_ERR_FAIL;
+  }
+
+  ats_free(val);
+  return TS_ERR_OKAY;
+}
+</pre>
+</p>
+
+<p>traffic server里对于这些数据的管理是比较复杂的, 它有两套数据, 一套是管理配置的信息,
+会基于这些信息, 定时地生成数据, 生成的数据是另一份.</p>
+
+<p>两套数据之间进行会有一个时间差.</p>
+
+<p>配置信息在启动的时候注册到 g_records_ht.</p>
+
+<p>启动流程:
+proxy: Main.cc : main: LibRecordsConfigInit:
+这个函数完成同一文件中的 RecordsConfig 中的列出的所有的项的注册功能.
+注册的通过调用RecRegisterStatInt 一系列的函数完成. 这些函数是
+对于 RecRegisterConfig 的包装.</p>
+
+<p>另外的一些配置项在 HttpConfig.cc 里进行注册.</p>
+
+<p>这些配置项与一些 traffic server内在的变量相关联, 但是一些特别的配置项
+是这些已经有的项目的基础上计算出来的, 这些计算的过程过程是通过
+stats.config.xml.dafault 这个配置文件列出来的, 比如: proxy.node.cache_total_hits.</p>
+
+<p>而对于值的获取是通过函数 RecGetRecordType 获得的.</p>
+
+<p>ATS 的代码实现过于复杂, 并且分散. 而实际上这些功能是没有必要的.</p>

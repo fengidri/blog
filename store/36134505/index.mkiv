@@ -1,0 +1,21 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Title: 设置网卡中断
+%Class: linux
+%Post:1
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+\starttyping
+cpu_num=$(cat /proc/cpuinfo|grep process -c)
+irq_num=$(cat /proc/interrupts |grep -E "(eth2-|eth3-)" | awk -F: '{print $1}')
+
+i=0
+for num in $irq_num
+do
+     if [[ $i == $cpu_num ]]
+     then
+         i=0
+     fi
+     echo "obase=16;2^$i" |bc >  /proc/irq/$num/smp_affinity
+     let i=i+1
+done
+\stoptyping

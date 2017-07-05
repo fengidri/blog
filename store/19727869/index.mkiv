@@ -1,0 +1,61 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Title: C++ filt
+%Class: cpp
+%Post:1
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+对于 c++ 的程序, 使用 nm 查看符号的时候, 会出现一些奇怪的
+字符.
+
+由于每一个重载的函数都使用与原函数相同的名称，
+因此，支持函数重载的语言必须拥有一种机制，
+以区分同一个函数的许多重载版本。
+
+通常，一个目标文件中不能有两个名称相同的函数。
+为允许重载，编译器将描述函数参数类型的信息合并到函数的原始名称中，
+从而为重载函数生成唯一的函数名称。
+为名称完全相同的函数生成唯一名称的过程叫做名称改编（name mangling） 。
+如果使用nm转储前面的C++代码的已编译版本中的符号，
+将得到如下结果（有删减，以突出显示demo的重载版本）：
+
+\starttyping
+idabook# g++ -o cpp_test cpp_test.cpp
+idabook# nm cpp_test | grep demo
+0804843c T _Z4demoPc
+08048400 T _Z4demod
+08048428 T _Z4demodi
+080483fa T _Z4demoi
+08048414 T _Z4demoid
+080483f4 T _Z4demov
+\stoptyping
+
+C++标准没有为名称改编方案制定标准，因此，编译器设计人员必须自己制定标准。
+为了译解上面列出的demo函数的重载版本，我们需要一个能够理解编译器
+（这里为g++）的名称改编方案的工具，c++filt正是这样一个实用工具。
+c++filt将每个输入的名称看成是改编后的名称（mangled name），
+并设法确定用于生成该名称的编译器。
+如果这个名称是一个合法的改编名称，那么，c++filt就输出改编之前的原始名称；
+如果c++filt无法识别一个改编名称，那它就按原样输出该名称。
+
+
+我们可能会日志中得到backtrace 的结果, 这个时候可以
+进行选用, 使用如下的方式:
+\starttyping
+>>>xclip -o |c++filt
+/usr/local/bin/traffic_server - STACK TRACE:
+/usr/lib/libpthread.so.0(+0x10660)[0x2ad572c06660]
+/usr/local/libexec/trafficserver/head-request-cache.so(+0x1f68)[0x2ad576d7cf68]
+/usr/local/bin/traffic_server(CacheVC::callcont(int)+0x5b)[0x601c4b]
+/usr/local/bin/traffic_server(Cache::open_write(Continuation*, INK_MD5*, CacheFragType, int, long, char*, int)+0x5d8)[0x680418]
+/usr/local/bin/traffic_server(TSCacheWrite+0xd1)[0x4bd731]
+/usr/local/libexec/trafficserver/head-request-cache.so(+0x1ee0)[0x2ad576d7cee0]
+/usr/local/bin/traffic_server(HttpSM::state_api_callout(int, void*)+0xf5)[0x5319d5]
+/usr/local/bin/traffic_server(HttpSM::state_read_server_response_header(int, void*)+0x3aa)[0x5325fa]
+/usr/local/bin/traffic_server(HttpSM::main_handler(int, void*)+0xc1)[0x5364a1]
+/usr/local/bin/traffic_server[0x6a8f7f]
+/usr/local/bin/traffic_server(NetHandler::mainNetEvent(int, Event*)+0x1fa)[0x69b40a]
+/usr/local/bin/traffic_server(EThread::execute()+0xc02)[0x6cccc2]
+/usr/local/bin/traffic_server[0x6cb585]
+/usr/lib/libpthread.so.0(+0x7354)[0x2ad572bfd354]
+/usr/lib/libc.so.6(clone+0x6d)[0x2ad573cffbfd]
+\stoptyping

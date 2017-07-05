@@ -1,0 +1,28 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Title: tcpdump 技巧
+%Class: linux
+%Post:1
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+对包的内容进行过滤, GET 方法 80 端口:
+\starttyping
+tcpdump -iany 'tcp[(tcp[12]>>2):4] = 0x47455420' and port 80 -A
+\stoptyping
+
+
+tcp[12]>>2 得到包的头的长度. 所以 tcp[(tcp[12]>>2):4] 就是 tcp body 的前四个字节.
+如下的是过滤 HTTP 响应是 504 的包:
+\starttyping
+tcpdump -iany 'tcp[((tcp[12]>>2)+8):4] = 0x20534852' and port 80 -A
+\stoptyping
+
+
+如下python code 可以得到16进制数:
+\starttyping
+'0x%x%x%x%x' % tuple([ord(x) for x in ' 504'])
+\stoptyping
+
+选择 syn 的应答包:
+\starttyping
+tcp[tcpflags] & tcp-syn != 0 && tcp[tcpflags] & tcp-ack != 0
+\stoptyping

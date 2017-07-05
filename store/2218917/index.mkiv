@@ -1,0 +1,32 @@
+%title:  python嵌入到shell
+%class: python
+单选:
+\starttyping
+echo "print 'a' " | python -
+\stoptyping
+在shell中嵌入 python, 也可以在命令行上快速执行
+\starttyping
+cat <<EOF | python2 -
+import os
+print os.name
+EOF
+\stoptyping
+
+当前也可以:
+
+\starttyping
+A='AAAAAAAAAA'
+cat <<EOF | python2 -
+print "$A"
+EOF
+\stoptyping
+
+还可以是函数
+\starttyping
+function A(){
+cat <<EOF | python2 -
+print "$1"
+EOF
+}
+A "AAAAAAAAAAA"
+\stoptyping

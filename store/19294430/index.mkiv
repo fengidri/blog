@@ -1,0 +1,29 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Title: ATS - Guide to the Cache API
+%Class: ats
+%Post:1
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+The cache API enables plugins to read, write, and remove objects in the Traffic Server cache. All cache APIs are keyed by an object called an TSCacheKey; cache keys are created via TSCacheKeyCreate; keys are destroyed via TSCacheKeyDestroy. Use TSCacheKeyDigestSet to set the hash of the cache key.
+
+Note that the cache APIs differentiate between HTTP data and plugin data. The cache APIs do not allow you to write HTTP docs in the cache; you can only write plugin-specific data (a specific type of data that differs from the HTTP type).
+
+
+\starttyping
+const unsigned char *key_name = "example key name";
+
+TSCacheKey key;
+TSCacheKeyCreate (&key);
+TSCacheKeyDigestSet (key, (unsigned char *) key_name , strlen(key_name));
+TSCacheKeyDestroy (key);
+\stoptyping
+
+
+
+\section{How to Do a Cache Read}
+
+TSCacheRead does not really read - it is used for lookups (see the sample Protocol plugin). Possible callback events include:
+
+\startitemize
+\item  TS_EVENT_CACHE_OPEN_READ - indicates the lookup was successful. The data passed back along with this event is a cache vconnection that can be used to initiate a read on this keyed data.
+\item  TS_EVENT_CACHE_OPEN_READ_FAILED - indicates the lookup was unsuccessful. Reasons for this event could be that another continuation is writing to that cache location, or the cache key doesn’t refer to a cached resource. Data payload for this event indicates the possible reason the read failed (TSCacheError).
+\stopitemize

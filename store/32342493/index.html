@@ -1,0 +1,173 @@
+<p></p>
+
+<h3>tcp_ack</h3>
+<p>tcp_ack 就是用于处理接收到的所有的 ack 标志的段, 参数如下:
+
+    <ul>
+
+        <li>skb: 收到的 ACK 段
+
+        <li>flag: 如下表:
+    </ul>
+<table>
+<tr><td>flag </td><td>描述 </td></tr>
+<tr><td>FLAG_DATA </td><td>接收的 ACK 段是否携带有数据. </td></tr>
+<tr><td>FLAG_WIN_UPDATE </td><td>接收的 ACK 段更新了发送窗口 </td></tr>
+<tr><td>FLAG_DATA_ACKED </td><td>接收的 ACK 段确认了新的数据 </td></tr>
+<tr><td>FLAG_RETRANS_DATA_ACKED </td><td>表示此报文已重传过 </td></tr>
+<tr><td>FLAG_SYN_ACKED </td><td>接收的 ACK 段确诊了 SYN 段 </td></tr>
+<tr><td>FLAG_DATA_SACKED </td><td>是新的 SACK </td></tr>
+<tr><td>FLAG_ECE </td><td>在 ACK 段中存在 ECE 标志 </td></tr>
+<tr><td>FLAG_DATA_LOST </td><td>由 SACK 标识的数据n已丢失 </td></tr>
+<tr><td>FLAG_SLOWPATH </td><td>在慢速路径中处理 </td></tr>
+</table>
+</p>
+
+<h3>tcp_tcp 函数解析</h3>
+<p><pre>
+/* This routine deals with incoming acks, but not outgoing ones. */
+static int tcp_ack(struct sock *sk, struct sk_buff *skb, int flag)
+{
+	struct inet_connection_sock *icsk = inet_csk(sk);
+	struct tcp_sock *tp = tcp_sk(sk);
+	u32 prior_snd_una = tp-&gt;snd_una;
+	u32 ack_seq = TCP_SKB_CB(skb)-&gt;seq;
+	u32 ack = TCP_SKB_CB(skb)-&gt;ack_seq;
+	u32 prior_in_flight;
+	u32 prior_fackets;
+	int prior_packets;
+	int frto_cwnd = 0;
+
+    // 校验确诊的序号是否在 SND.UNA 和 SND.NXT 之间
+	/* If the ack is older than previous acks
+	 * then we can probably ignore it.
+	 */
+    // 已经接收过这个序号的 ack 了, 因为每个有负载的 TCP 段都会带一个 ack,
+    // 即使这个序号已经确诊过了, 因此如果是一具重复的 ACK 就不处理直接返回.
+    // 但是如果带有 SACK 选项, 要进行处理.
+	if (before(ack, prior_snd_una))
+		goto old_ack;
+
+	/* If the ack includes data we haven't sent yet, discard
+	 * this segment (RFC793 Section 3.9).
+	 */
+     // ack 确认的数据还没有发送的呢, 直接返回
+	if (after(ack, tp-&gt;snd_nxt))
+		goto invalid_ack;
+
+	if (after(ack, prior_snd_una))
+		flag |= FLAG_SND_UNA_ADVANCED;
+
+	if (sysctl_tcp_abc) {
+        // 启用 tcp_abc 之后, 在拥塞回避阶段, 记录已经确认的字节数
+		if (icsk-&gt;icsk_ca_state &lt; TCP_CA_CWR)
+			tp-&gt;bytes_acked += ack - prior_snd_una;
+		else if (icsk-&gt;icsk_ca_state == TCP_CA_Loss)
+			/* we assume just one segment left network */
+			tp-&gt;bytes_acked += min(ack - prior_snd_una,
+					       tp-&gt;mss_cache);
+	}
+
+	prior_fackets = tp-&gt;fackets_out;
+	prior_in_flight = tcp_packets_in_flight(tp);
+
+    // 如果 ack 执行的是快速路径
+	if (!(flag &amp; FLAG_SLOWPATH) &amp;&amp; after(ack, prior_snd_una)) {
+		/* Window is constant, pure forward advance.
+		 * No more checks are required.
+		 * Note, we use the fact that SND.UNA&gt;=SND.WL2.
+		 */
+        //更新发送的窗口的左边界
+		tcp_update_wl(tp, ack_seq);
+		tp-&gt;snd_una = ack;
+        // 添加 FLAG_WIN_UPDATE 标记
+		flag |= FLAG_WIN_UPDATE;
+
+        // 通知拥塞控制算法模块本次 ACK 是快速路径, 如有必要, 就做相应处理
+		tcp_ca_event(sk, CA_EVENT_FAST_ACK);
+
+		NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPHPACKS);
+	} else { // 慢速路径
+		if (ack_seq != TCP_SKB_CB(skb)-&gt;end_seq) // ACK 段中是否有数据负载
+			flag |= FLAG_DATA;
+		else
+			NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPPUREACKS);
+
+		flag |= tcp_ack_update_window(sk, skb, ack, ack_seq); // 更新窗口
+
+		if (TCP_SKB_CB(skb)-&gt;sacked) // SACK
+			flag |= tcp_sacktag_write_queue(sk, skb, prior_snd_una); // 标记重传队列
+
+		if (TCP_ECN_rcv_ecn_echo(tp, tcp_hdr(skb))) // 是否存在 ECE 标志
+			flag |= FLAG_ECE;
+
+		tcp_ca_event(sk, CA_EVENT_SLOW_ACK); // 通知拥塞控制算法, 模块本次是 ACK 慢速路径
+	}
+
+	/* We passed data and got it acked, remove any soft error
+	 * log. Something worked...
+	 */
+	sk-&gt;sk_err_soft = 0;
+	icsk-&gt;icsk_probes_out = 0;
+	tp-&gt;rcv_tstamp = tcp_time_stamp; // 最近一次收到 ACK 段的时间
+	prior_packets = tp-&gt;packets_out; // 测试有无已经发送未确诊的段, 没有就跳转到 no_queue
+	if (!prior_packets)
+		goto no_queue;
+
+	/* See if we can take anything off of the retransmit queue. */
+    // 在重传队列中删除已确认的段
+	flag |= tcp_clean_rtx_queue(sk, prior_fackets, prior_snd_una);
+
+	if (tp-&gt;frto_counter)
+		frto_cwnd = tcp_process_frto(sk, flag); // 如果重传超时后使用 FRTO 算法, 则调用 tcp_process_frto 处理
+	/* Guarantee sacktag reordering detection against wrap-arounds */
+	if (before(tp-&gt;frto_highmark, tp-&gt;snd_una))
+		tp-&gt;frto_highmark = 0;
+
+	if (tcp_ack_is_dubious(sk, flag)) { // 根据 ACK 明确更新拥塞窗口, 迁移拥塞状态机
+    // 如有如下一条就认为 ACK 不明确
+    // 接收到的 ACK 是重复的
+    // 接收到的 SACK 块joaa 拥塞通知
+    // 当前拥塞状态不为Open
+
+		/* Advance CWND, if state allows this. */
+		if ((flag &amp; FLAG_DATA_ACKED) &amp;&amp; !frto_cwnd &amp;&amp;
+		    tcp_may_raise_cwnd(sk, flag))
+			tcp_cong_avoid(sk, ack, prior_in_flight);
+		tcp_fastretrans_alert(sk, prior_packets - tp-&gt;packets_out,
+				      flag);
+	} else {
+		if ((flag &amp; FLAG_DATA_ACKED) &amp;&amp; !frto_cwnd)
+			tcp_cong_avoid(sk, ack, prior_in_flight);
+	}
+
+	if ((flag &amp; FLAG_FORWARD_PROGRESS) || !(flag &amp; FLAG_NOT_DUP))
+		dst_confirm(sk-&gt;sk_dst_cache);
+
+	return 1;
+
+no_queue:
+	/* If this ack opens up a zero window, clear backoff.  It was
+	 * being used to time the probes, and is probably far higher than
+	 * it needs to be for normal retransmission.
+	 */
+	if (tcp_send_head(sk))
+		tcp_ack_probe(sk); // 确定是不否要进行 0 窗口探测
+	return 1;
+
+invalid_ack:
+	SOCK_DEBUG(sk, "Ack %u after %u:%u\n", ack, tp-&gt;snd_una, tp-&gt;snd_nxt);
+	return -1;
+
+old_ack:
+	if (TCP_SKB_CB(skb)-&gt;sacked) {
+		tcp_sacktag_write_queue(sk, skb, prior_snd_una);
+		if (icsk-&gt;icsk_ca_state == TCP_CA_Open)
+			tcp_try_keep_open(sk);
+	}
+
+	SOCK_DEBUG(sk, "Ack %u before %u:%u\n", ack, tp-&gt;snd_una, tp-&gt;snd_nxt);
+	return 0;
+}
+</pre>
+</p>

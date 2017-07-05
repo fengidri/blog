@@ -1,0 +1,136 @@
+%Title: 在linux系统中I/O 调度的选择
+%Class: kernel
+%Post:1
+%
+I/O 调度算法在各个进程竞争磁盘I/O的时候担当了裁判的角色.
+他要求请求的次序和时机做最优化的处理,以求得尽可能最好的整体I/O性能.其实所有的 IO 优化只有二点,合并和排序.
+
+在linux下面列出4种调度算法
+\startitemize
+\item  CFQ (Completely Fair Queuing 完全公平的排队)(elevator=cfq)：
+
+这是默认算法,对于通用服务器来说通常是最好的选择.它试图均匀地分布对I/O带宽的访问.
+在多媒体应用, 总能保证audio、video及时从磁盘读取数据.
+但对于其他各类应用表现也很好.每个进程一个queue,每个queue按照上述规则进行merge和sort.
+进程之间round robin调度,每次执行一个进程的4个请求.可以调 queued 和 quantum 来优化
+
+\item Deadline (elevator=deadline)：
+
+这个算法试图把每次请求的延迟降至最低.该算法重排了请求的顺序来提高性能.
+可以调队列的过期的读写过程,如 read_expire 和 write_expire
+二个参数来控制多久内一定要读到数据,超时就放弃排序.
+比较合适小文件.还可以使用打开 front_merges 来进行合并邻近文件.
+
+\item NOOP (elevator=noop):
+
+    I/O请求被分配到队列,调度由硬件进行,只有当CPU时钟频率比较有限时进行.
+Noop对于I/O不那么操心,对所有的I/O请求都用FIFO队列形式处理,默认认为 I/O不会存在性能问题.
+这也使得CPU也不用那么操心.当然对于复杂一点的应用类型使用这个调度器,用户自己就会非常操心.
+Noop调度算法指的是当请求被存储到队列并交由I/O子系统处理时由磁盘硬件对其进行优化.
+该算法一般只对一些特定的硬件（例如RAM disk和TCQ disk等）.现代磁盘控制器都具备通过tagged command queuing进行优化的功能.
+Tagged command queuing（TCQ）可以通过由磁盘控制器对I/O请求进行重新排序来减少磁头的动作.
+通常需要进行重组的I/O请求都会带有一个标识符,这样控制器在接收到这些I/O请求的时候会按照规则进行处理.
+有些应用程序需要对队列长度进行限制,而现代的设备驱动都具备用于控制队列长度的TCO功能,
+并且该功能可以作为内核参数在系统启动的时候添加.
+例如要控制SCSI驱动器Lun2的队列长度为64个请求,可以修改/etc/grub.conf并增加下面的内核参数：aic7xxx=tag_info:{{0,0,64,0,0,0,0}}
+
+\item Anticipatory (elevator=as):
+
+   对读操作优化服务时间,在提供一个I/O的时候进行短时间等待,
+   使进程能够提交到另外的I/O.Anticipatory scheduler（as) 曾经一度是Linux 2.6 Kernel的I/O scheduler.Anticipatory的中文含义是“预料的,预想的”,
+   这个词的确揭示了这个算法的特点,简单的说有个I/O发生的时候,如果又有进程请求I/O操作,则将产生一个默认的6毫秒猜测时间,
+   猜测下一个进程请求I/O是要干什么的.这对于随机读取会造成比较大的延时,对数据库应用很糟糕,而对于Web Server等则会表现的不错.
+   这个算法也可以简单理解为面向低速磁盘的,因为那个“猜测”实际上的目的是为了减少磁头移动时间.
+   因此这种算法更加适合顺序读写的应用程序.这个可以用来调整的内核参数有 antic_expire ,read_expire 和 write_expire.
+
+
+\stopitemize
+
+\section{linux中IO调度方法的查看和设置的方法}
+
+查看当前IO
+\starttyping
+$ cat /sys/block/{DEVICE-NAME}/queue/scheduler
+$ cat /sys/block/sd*/queue/scheduler
+\stoptyping
+
+例:输出结果如下
+\starttyping
+noop anticipatory deadline [cfq]
+\stoptyping
+
+设置当前IO
+\starttyping
+$ echo {SCHEDULER-NAME} > /sys/block/{DEVICE-NAME}/queue/scheduler
+$ echo noop > /sys/block/hda/queue/scheduler
+\stoptyping
+
+\section{对IO调度使用的建议}
+
+\subsection{Deadline I/O scheduler }
+       在这个中 deadline 调度算法通过降低性能而获得更短的等待时间,它使用轮询的调度器,简洁小巧,提供了最小的读取延迟和尚佳的吞吐量,特别适合于读取较多的环境(比如数据库,Oracle 10G 之类).
+
+\subsection{Anticipatory I/O scheduler}
+      anticipatory 算法通过增加等待时间来获得更高的性能,假设一个块设备只有一个物理查找磁头(例如一个单独的SATA硬盘),将多个随机的小写入流合并成一个大写入流(相当于给随机读写变顺序读写), 使用这个原理来使用读取写入的延时换取最大的读取写入吞吐量.适用于大多数环境,特别是读取写入较多的环境,比如文件服务器,Web 应用,App等应用我们可以采纳as调度.后面我会教大家怎么调这个的合并的等待时间.
+
+\subsection{CFQ I/O scheduler}
+      这个是 对所有因素也都做了折中而尽量获得公平性,使用QoS策略为所有任务分配等量的带宽,避免进程被饿死并实现了较低的延迟,可以认为是上述两种调度器的折中.适用于有大量进程的多用户系统
+
+\subsection{Anticipatory 调节}
+
+根据上面的内容,我们算法中可能用的最多的就是 Anticipatory 的算法了,会根据时间来多排一些内容在写,所以下面讲讲这个参数可以调的部分.
+除了算法修改成这个算法外,影响它的还有
+磁盘队列长度
+/sys/block/sda/queue/nr_requests 默认只有 128 个队列,可以提高到 512 个.会更加占用内存,但能更加多的合并读写操作,速度变慢,但能读写更加多的量
+
+等待时间
+/sys/block/sda/queue/iosched/antic_expire 读取附近产生的新请时等待多长时间
+
+对读优化的参数
+
+/sys/block/sda/queue/read_ahead_kb
+    这个参数对顺序读非常有用,意思是,一次提前读多少内容,无论实际需要多少.默认一次读 128kb 远小于要读的,设置大些对读大文件非常有用,可以有效的减少读 seek 的次数,这个参数可以使用 blockdev –setra 来设置,setra 设置的是多少个扇区,所以实际的字节是除以2,比如设置 512 ,实际是读 256 个字节.
+
+\section{几个非常有效的 IO 调度调节的内核参数}
+\startitemize
+\item   /proc/sys/vm/dirty_ratio
+
+  这个参数控制文件系统的文件系统写缓冲区的大小,单位是百分比,表示系统内存的百分比,表示当写缓冲使用到系统内存多少的时候,开始向磁盘写出数 据.增大之会使用更多系统内存用于磁盘写缓冲,也可以极大提高系统的写性能.但是,当你需要持续、恒定的写入场合时,应该降低其数值,一般启动上缺省是 10.
+  下面是增大的方法：
+\starttyping
+  echo ’40’> /proc/sys/vm/dirty_ratio
+\stoptyping
+
+\item /proc/sys/vm/dirty_background_ratio
+
+  这个参数控制文件系统的pdflush进程,在何时刷新磁盘.单位是百分比,表示系统内存的百分比,意思是当写缓冲使用到系统内存多少的时候, pdflush开始向磁盘写出数据.增大之会使用更多系统内存用于磁盘写缓冲,也可以极大提高系统的写性能.但是,当你需要持续、恒定的写入场合时,应该降低其数值,一般启动上缺省是 5.
+  下面是增大的方法：
+\starttyping
+  echo ’20’ > /proc/sys/vm/dirty_background_ratio
+\stoptyping
+
+
+
+\item /proc/sys/vm/dirty_writeback_centisecs
+
+    这个参数控制内核的脏数据刷新进程pdflush的运行间隔.单位是 1/100 秒.缺省数值是500,也就是 5 秒.如果你的系统是持续地写入动作,那么实际上还是降低这个数值比较好,这样可以把尖峰的写操作削平成多次写操作.设置方法如下： echo ‘200’ > /proc/sys/vm/dirty_writeback_centisecs 如果你的系统是短期地尖峰式的写操作,并且写入数据不大（几十M/次）且内存有比较多富裕,
+    那么应该增大此数值：
+\starttyping
+    echo ‘1000’ > /proc/sys/vm/dirty_writeback_centisecs
+\stoptyping
+
+\item /proc/sys/vm/dirty_expire_centisecs
+
+  这个参数声明Linux内核写缓冲区里面的数据多“旧”了之后,pdflush进程就开始考虑写到磁盘中去.
+  单位是 1/100秒.缺省是 30000,也就是 30 秒的数据就算旧了,将会刷新磁盘.
+  对于特别重载的写操作来说,这个值适当缩小也是好的,但也不能缩小太多,
+  因为缩小太多也会导致IO提高太快.建议设置为 1500,也就是15秒算旧.
+\starttyping
+  echo ‘1500’ > /proc/sys/vm/dirty_expire_centisecs
+\stoptyping
+
+  当然,如果你的系统内存比较大,并且写入模式是间歇式的,并且每次写入的数据不大（比如几十M）,那么这个值还是大些的好.
+\stopitemize
+
+\section{参考}
+\goto{在linux系统中I/O 调度的选择 }{http://www.php-oa.com/2010/01/03/linux-io-elevator.html}

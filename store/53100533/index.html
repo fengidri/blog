@@ -1,0 +1,100 @@
+<p>今天遇到一个情况, 一个程序在动态加载了一个 A.so 库的时候出现了
+undefined symbol 的情况.</p>
+
+<p>对应的 symbol 在另一个动态库 B.so 中. 但是 ldd A.so 的时候, 并没有 B.so.
+有些奇怪. 为什么会这样呢?</p>
+
+<p>先不管这个问题, 想想怎么解决这个问题呢? 我们试着先动态加载了 B.so 再加载 A.so
+可以在 proc 下的 maps 文件里看到两个库都成功加载了, 但是问题还是存在的.
+想来动态加载 B.so 的时候, 我并没有指定要调用的 symbol. 所以程序的 symbols 表里还是
+没有对应的 symbol. 在试着, 加载指定的 symbol 的时候, 遇到了一些问题.</p>
+
+<p>后来的解决方法是, 我们写了一个 C.so, 编译的时候指定了 A.so 还 B.so. 程序直接加 C.so, 可以解决问题.</p>
+
+<p>那么问题是为什么这个 A.so 有 undefined symbol 却没有依赖的库呢?</p>
+
+<p>没有依赖的库, 原因来自于在生成库的时候, 没有使用 -l 指定. 我们知道如果生成的是一个可执行程序,
+没有使用 -l 是一定会报错的. 但是 使用-shared 的时候会怎么样的呢? 我们一直都是以为
+如果有 undefined symbols 那么 gcc 应该会试着去 -l 指定的库中找到, 并把 -l 指定的库的 soname
+写入到的 so 文件中去, 也就是说要保证所有的 undefined 的 symbol 可以在 so 文件依赖的库中找到,
+从而实现一个完美的符号链表. 我一直是这样认为的是. 但是事实却不是这样的.
+<pre>
+--allow-shlib-undefined
+--no-allow-shlib-undefined
+    Allows or disallows undefined symbols in shared libraries.
+    This switch is similar to --no-undefined except that it determines
+    the behaviour when the undefined symbols are in a shared library
+    rather than a regular object file.  It does not affect how
+    undefined symbols in regular object files are handled.
+
+    The default behaviour is to report errors for any undefined symbols
+    referenced in shared libraries if the linker is being used
+    to create an executable, but to allow them if the linker is being
+    used to create a shared library.
+
+    The reasons for allowing undefined symbol references in shared
+    libraries specified at link time are that:
+
+    ·   A shared library specified at link time may not be the same as
+        the one that is available at load time, so the symbol might
+        actually be resolvable at load time.
+
+    ·   There are some operating systems, eg BeOS and HPPA, where undefined
+        symbols in shared libraries are normal.
+
+        The BeOS kernel for example patches shared libraries at load time to
+        select whichever function is most appropriate for the
+        current architecture.  This is used, for example, to dynamically
+        select an appropriate memset function.
+</pre>
+</p>
+
+<p>ld 会通过这个参数开启是不否允许在 shared library 中存在 undefined symbols.
+这是因为 ld 认为, 链接的时候生成的 shared 文件与在加载的时候的并不一定是同一个, 这中间还
+可以有很多的操作与变化. 另一个原因在于其它的一些平台上, 这种情况是正常的. BeOS 会
+依赖于运行的环境不同, 加载不同的符号.</p>
+
+<p>如下的这些 ld 的参数都是用于控制是不否允许在 shared 文件里有 undefined symbols
+
+    <ul>
+
+        <li>--no-undefined
+
+        <li>-z defs
+
+        <li>--allow-shlib-undefined
+
+        <li>--no-allow-shlib-undefined
+    </ul></p>
+
+<p>补: 7-22-1</p>
+
+<p>今天, 再回看这个问题, 发现 A.so 还有一个对应的 A.a 文件. 那么是不是可以使用这个 A.a 来生成一个可以使用的
+A.so 呢?</p>
+
+<p>在使用静态库的时候, 有一个问题, 对于静态库的链接只会提取引用到的符号. 我们这里想的是把整个 A.a 都放到
+生成的动态库中去. 如下:
+<pre>
+gcc -shared -o libD.so  -Wl,--whole-archive libA.a  -Wl,--no-whole-archive -l curl
+</pre>
+</p>
+
+<p>使用 --whole-archive 把整个 libA.a 都加入到动态库中去生成一个 D.so 文件, 并补充增加一个 curl 库.</p>
+
+<p>另一个问题, 其实就是为什么会要存在这种情况. 今天在和同事讨论的时候, 他说了一个情况就是 lua.
+lua 的库就是这样编译. 对比 python, python 的解释器在运行的时候, 是引用的 libpython2.7.so 的,
+那么我们一般编译 python 的库的时候, 也会使用-l 增加库的依赖库文件 libpython2.7.so.
+但是为什么 lua 就要让库文件中保留这种 undefined symbols 的情况呢? 因为一般 lua 的解释器运行的时候
+不会再引用一个 lua 的动态库文件, lua 一般是嵌入到整个程序中的. 这样的情况, 如果库文件增加一个 liblua.so 的
+依赖库, 在运行起来的时候就会引用 liblua.so. 但是实际上 liblua.so 里的那些符号已经在解释器里静态存在了.
+这样的结果就是可能会引发冲突.</p>
+
+<p>补: 7-22-2</p>
+
+<p>又研究出来一个方法, 我们其实可以考虑直接修改 A.so 给它增加一个依赖库的头.
+<pre>
+patchelf --add-needed libcurl.so.4 A.so
+</pre>
+</p>
+
+<p>&nbsp;<a href=https://github.com/NixOS/patchelf >patchelf</a>&nbsp;是一个可以对于 ELF 文件进行修正的工具.</p>

@@ -1,0 +1,26 @@
+%Title: ATS - 编译安装的问题
+%Class: ats
+%Post:1
+
+遇到这样的问题:
+\starttyping
+make -f Makefile-pl INSTALLDIRS= PREFIX=/usr/local DESTDIR=
+make[1]: Entering directory '/home/feng/traffic/trafficserver/lib/perl'
+make[1]: *** No rule to make target '/usr/lib/perl/5.14/Config.pm', needed by 'Makefile-pl'.  Stop.
+make[1]: Leaving directory '/home/feng/traffic/trafficserver/lib/perl'
+Makefile:632: recipe for target 'all-local' failed
+make: *** [all-local] Error 2
+\stoptyping
+
+问题应该在于ats 的makefile 对于perl的引用是直接写的路径, 引起的.
+在archlinux上perl的安装路径并不是makefile-pl 中所写的那样的.
+修改lib/perl下的Makefile-pl中的两个变量:
+\starttyping
+PERL_ARCHLIB = /usr/lib/perl5/core_perl
+PERL_INC = /usr/lib/perl5/core_perl/CORE
+\stoptyping
+
+
+
+并不了解perl 的相关知识, 只是依赖于对于编译的相关经验完成. 这样的修改.
+

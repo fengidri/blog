@@ -1,0 +1,74 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Title: AMD64 寄存器(GCC)
+%Class: kernel
+%Post:1
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+%
+%
+不同架构的CPU，寄存器名称被添以不同前缀以指示寄存器的大小。
+例如对于x86架构，字母“e”用作名称前缀，指示各寄存器大小为32位
+对于x86_64寄存器，字母“r”用作名称前缀，指示各寄存器大小为64位。
+
+
+X86-64有16个64位寄存器，分别是：
+\%rax，\%rbx，\%rcx，\%rdx，\%esi，\%edi，\%rbp，\%rsp，\%r8，\%r9，\%r10，\%r11，\%r12，\%r13，\%r14，\%r15。
+其中：
+
+
+\startitemize
+\item \%rax 作为函数返回值使用。
+\item \%rsp 栈指针寄存器，指向栈顶
+\item \%rdi，\%rsi，\%rdx，\%rcx，\%r8，\%r9 用作函数参数，依次对应第1参数，第2参数。。。
+\item \%rbx，\%rbp，\%r12，\%r13，\%14，\%15 用作数据存储，遵循被调用者使用规则，简单说就是随便用，
+        调用子函数之前要备份它，以防他被修改
+\item \%r10，\%r11 用作数据存储，遵循调用者使用规则，简单说就是使用之前要先保存原值
+\stopitemize
+
+\section{函数的开始}
+在函数开始的时候,
+将调用函数的栈帧栈底地址入栈，即将bp寄存器的值压入调用栈中
+建立新的栈帧，将被调函数的栈帧栈底地址放入bp寄存器中
+\starttyping
+push %rbp
+mov  %rsp, %rbp
+\stoptyping
+但是在 x86-64下这个就有一些不同了, 详情看参数文档.
+
+\section{函数的结尾}
+gcc 使用 ax 保存函数的返回值, 所以在函数结束的时候一般会出现如下的代码:
+\starttyping
+0x0000000000400534 <main+19>:    b8 00 00 00 00    mov $0x0,%eax  // 保存返回值
+0x0000000000400539 <main+24>:     c9               leaveq
+0x000000000040053a <main+25>:     c3               retq
+\stoptyping
+
+\section{函数的调用}
+先要把参数传递进来,
+\starttyping
+mov $0x5, %esi
+mov $0x2, %edi
+\stoptyping
+如果没有使用64 位的寄存器进行优化, 或参数多于6个, 就会使用内存的栈来实现:
+\starttyping
+sub $0x8, %esp
+mov $0x5, -0x4(%ebp)
+mov $0x2, -0x8(%ebp)
+\stoptyping
+
+
+万事具备，是时候将执行控制权交给foo函数了，call指令完成交接任务：
+
+\starttyping
+0x000000000040052f <main+14>:     e8 d2 ff ff ff    callq  0x400506 <foo>
+\stoptyping
+一条call指令，完成了两个任务：
+
+\startitemize
+\item 将调用函数(main)中的下一条指令(这里为0x400534)入栈，被调函数返回后将取这条指令继续执行，64位rsp寄存器的值减8
+\item 修改指令指针寄存器rip的值，使其指向被调函数(foo)的执行位置，这里为0x400506
+\stopitemize
+
+\section{参考}
+\goto{http://www.searchtb.com/2013/03/x86-64_register_and_function_frame.html}
+\goto{http://www.cnblogs.com/bangerlee/archive/2012/05/22/2508772.html}

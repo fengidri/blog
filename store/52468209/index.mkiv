@@ -1,0 +1,95 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Title: screen in linux
+%Class: linux
+%Post:1
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+显示器是 linux 下可能比较麻烦的硬件, 因为显示器太重要的.
+
+\section{亮度}
+xorg-xbacklight 包中的 xbacklight 命令可以设置亮度
+\starttyping
+$xbacklight -set 50  # sets brightness to 50% of maximum
+$xbacklight -inc 10  # increase brightness by 10%
+$xbacklight -dec 10  # decrease brightness by 10%
+\stoptyping
+但是可能也不能用, 因为这个东西其实比较麻烦, 可以看\goto{这里}{https://wiki.archlinux.org/index.php/Backlight}
+
+\section{xorg 结构}
+实际上现在的 xorg 是可以对于显示设置驱动什么的进行自动处理的, xorg 的配置文件
+已经不处长写的了, 但是还是有一些场景下是有用的.
+
+先理解一下 xorg 下对于显示设置的处理.
+
+首先是显卡也就是 Device. 显卡下面可以接显示器也就是 Monitor. 而一个 screen 可以由多个 Monitor 组合而
+成.
+
+比如:
+\starttyping
+/etc/X11/xorg.conf.d/10-monitor.conf
+=======================================================
+Section "Monitor"
+    Identifier             "Monitor0"
+EndSection
+
+Section "Device"
+    Identifier             "Device0"
+    Driver                 "vesa" #Choose the driver used for this monitor
+EndSection
+
+Section "Screen"
+    Identifier             "Screen0"  #Collapse Monitor and Device section to Screen section
+    Device                 "Device0"
+    Monitor                "Monitor0"
+    DefaultDepth           16 #Choose the depth (16||24)
+    SubSection             "Display"
+        Depth              16
+        Modes              "1024x768" #Choose the resolution
+    EndSubSection
+EndSection
+\stoptyping
+
+但是这样写, 可能是有问题的, 如果我有多个 Device 怎么办呢?
+
+Device 可以通过 'BusID' 定位, 其值来自于 lspci:
+\starttyping
+# lspci |grep VGA
+0b:00.0 VGA compatible controller: ASPEED Technology, Inc. ASPEED Graphics Family (rev 21)
+\stoptyping
+
+所以写成:
+\starttyping
+Section "Device"
+    Identifier             "Device0"
+    Driver                 "vesa"
+    BusID                  "PCI:0b:00:0"
+EndSection
+\stoptyping
+
+而 Monitor 是在 Device 下面的, 通过如下的方式来指定:
+\starttyping
+Section "Monitor"
+    Identifier             "Monitor0"
+    Option                 "PreferredMode" "1208x1024"
+EndSection
+
+Section "Device"
+    Identifier             "Device0"
+    Driver                 "vesa"
+    BusID                  "PCI:0b:00:0"
+    Option          "Monitor-DP1"  "Monitor0"
+EndSection
+\stoptyping
+使用 "Monitor-*" 的方式来指定某个接口对应的显示器. 这些接口的名字通过 xrandr 这个命令可以得到.
+对于 Monitor 使用的 mode 使用选项 PreferredMode 来指定.
+
+通过以上的方式我们可以把 Screen, Device, Monitor 三者关联起来.
+\section{xrandr}
+
+xrandr 命令是一个很方便的命令用于控制显示的输出. xrandr 可以列出来, 当前的所有的显示器.
+使用 --output 命令, 可以实现各种输出, 并控制各种细节.
+
+
+\section{参考}
+\goto{https://wiki.archlinux.org/index.php/xrandr}

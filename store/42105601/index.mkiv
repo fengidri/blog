@@ -1,0 +1,183 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Title: epoll 不通知 write 事件
+%Class: tcp
+%Post:1
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{问题}
+这次的事件比较奇怪. 发现在 ats 下载的时候,总是会下载一点点数据就不响应了, 也就是一个 800k 的数据, 下载了 300k, 就没有
+响应了, 连接还在.  这个机器有一个特点, 连接数达到了 7000.
+
+通过 strace 进行跟踪, 发现好像是 epoll 不能对于 write 事件进行唤醒.
+strace 里显示,
+\starttyping
+1403909 <... accept resumed> {sa_family=AF_INET, sin_port=htons(1113), sin_addr=inet_addr("192.168.250.5")}, [16]) = 661
+1403900 <... writev resumed> )          = 27252
+1403909 getpeername(661, {sa_family=AF_INET, sin_port=htons(1113), sin_addr=inet_addr("192.168.250.5")}, [16]) = 0
+1403900 io_getevents(140113454051328, 0, 1024,  <unfinished ...>
+1403909 gettid( <unfinished ...>
+1403900 <... io_getevents resumed> {}NULL) = 0
+1403909 <... gettid resumed> )          = 1403909
+1403900 epoll_wait(17,  <unfinished ...>
+1403909 write(1, "accept: fd:661 port:1113 ip: 192"..., 55 <unfinished ...>
+1403900 <... epoll_wait resumed> {}, 32768, 0) = 0
+1403909 <... write resumed> )           = 55
+1403900 readv(1962,  <unfinished ...>
+1403909 fcntl(661, F_GETFL <unfinished ...>
+1403900 <... readv resumed> 0x7fff3580fea0, 2) = -1 EAGAIN (Resource temporarily unavailable)
+1403909 <... fcntl resumed> )           = 0x2 (flags O_RDWR)
+1403900 io_getevents(140113454051328, 0, 1024,  <unfinished ...>
+1403909 fcntl(661, F_SETFL, O_RDWR|O_NONBLOCK <unfinished ...>
+1403900 <... io_getevents resumed> {}NULL) = 0
+1403909 <... fcntl resumed> )           = 0
+1403900 epoll_wait(17,  <unfinished ...>
+1403909 write(12, "\1\0\0\0\0\0\0\0", 8) = 8
+1403903 <... epoll_wait resumed> {{EPOLLIN, {u32=47560224, u64=47560224}}}, 32768, 10) = 1
+1403909 accept(33,  <unfinished ...>
+1403903 getpeername(12, 0x7f6eafa37cc0, [16]) = -1 ENOTSOCK (Socket operation on non-socket)
+1403903 read(12, "\1\0\0\0\0\0\0\0", 8) = 8
+1403903 epoll_ctl(21, EPOLL_CTL_ADD, 661, {EPOLLIN|EPOLLOUT|EPOLLET, {u32=2819168224, u64=140113242298336}}) = 0
+1403903 getsockname(661, {sa_family=AF_INET, sin_port=htons(8100), sin_addr=inet_addr("192.168.250.5")}, [16]) = 0
+1403903 io_getevents(140113329344512, 0, 1024, {}NULL) = 0
+1403903 epoll_wait(21, {{EPOLLIN|EPOLLOUT, {u32=2819168224, u64=140113242298336}}}, 32768, 10) = 1
+1403903 getpeername(661, {sa_family=AF_INET, sin_port=htons(1113), sin_addr=inet_addr("192.168.250.5")}, [16]) = 0
+1403903 gettid()                        = 1403903
+1403903 write(1, "epoll_wiat: fd:661 port:1113 ip:"..., 59) = 59
+1403903 readv(661, [{"GET HTTP://test13.b0.upaiyun.com"..., 4096}, {"\0\260~\205n\177\0\0 200 OK\r\nServer: ATS/4.2"..., 4096}], 2) = 199
+1403903 mmap(NULL, 540672, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) = 0x7f6e43985000
+1403903 writev(661, [{"HTTP/1.1 200 OK\r\nServer: ATS/4.2"..., 750}, {"!function(t,e){function i(t){var"..., 534640}], 2) = 180720
+1403903 write(661, ",e},move:function(t){if(this.sho"..., 354670) = 180720
+1403903 write(661, "+this.originalSize.width,c=this."..., 173950) = 102400
+1403903 write(661, "se/app\",\"tpl!./app.template\"],fu"..., 71550) = 26832
+1403903 write(661, "meFormat:e._defaults.timeFormat;"..., 44718) = -1 EAGAIN (Resource temporarily unavailable)
+1403903 io_getevents(140113329344512, 0, 1024, {}NULL) = 0
+1403903 epoll_wait(21,  <unfinished ...>
+1403906 <... epoll_wait resumed> {}, 32768, 10) = 0
+\stoptyping
+
+由 epoll 唤醒的是 read 事件, 之后的连接没有再被唤醒 write 事件, 但是对于 close 事件会被唤醒.
+
+第一行, 这个请求的 client 端口是 1113, 使用 curl --local-port 指定. 得到句柄是 661.
+之后对于 661 的操作关键的是把 其加入到 epoll fd 21中. 之后, 进行 epoll_wait, 被触发的是 read 事件,
+之后写入数据, 但是后面的 write 事件没有被触发. 但是实际上这个是本机操作的, 不可能会 write 事件没有完成.
+
+
+只是strace 并不能保证一定是 epoll 的问题, 可能已经被唤醒了, 上层的代码有问题, 我插入代码, 发现, 确实没有唤醒. 但是这个
+并不是必现的, 只有当负载比较高的时候, 才会出现.
+
+最后发现 ATS 有 proxy.config.net.sock_send_buffer_size_in 用于设置 SO_SNDBUF, 在关闭这个选项之后, 发现正常了.
+
+\section{问题 TODO}
+问题是这样解决了.  但是产生几个问题:
+
+
+\startitemize
+\item 写事件与读事件的条件是什么?
+\item SO_SNDBUF 的使用: ats 中好像没有对于每一个新连接使用 socksetopt, 这个选项应该如何使用? 有没继承关系
+\item SO_SNDBUF 与不设置的情况下, 有什么不同的地方? 与 epoll 有没有冲突
+\stopitemize
+
+
+\section{写事件与读事件的条件是什么?}
+选项: SO_RCVLOWAT SO_SNDLOWAT
+
+每个套接口都有一个接收低潮限度和一个发送低潮限度。
+\startitemize
+\item 接收低潮限度：对于TCP套接口而言，接收缓冲区中的数据必须达到规定数量，内核才通知进程“可读”。比如触发select或者epoll，返回“套接口可读”。
+\item 发送低潮限度：对于TCP套接口而言，和接收低潮限度一个道理。
+\stopitemize
+
+理解接收低潮限度：如果应用程序没有调用recv()去读取socket的接受缓冲区的数据，则接受缓冲区数据将注一直保存在接受缓冲区中，
+所以随着接受缓冲区接受到更多发送端发送缓冲区中的数据，则肯定会导致接受缓冲区溢出，所以设置一个接受低潮限度，
+当epoll监听到某一个socket的接受缓冲区的数据超过了接受低潮限度，则触发读就绪，使得epoll循环返回，开始处理读I/O事件。
+
+接收低潮限度：默认为1字节
+
+理解发送低潮限度：如果应用程序没有调用send()来copy应用程序buff中的数据到socket发送缓冲区中，
+则随着发送缓冲区的数据被内核通过tcp协议发送出去，最后socket发送缓冲区的数据越来越少，可用的剩余空间越来越多，
+最后超过发送缓冲区的发送低潮限度，则epoll监听到这个socket可写，使得epoll循环返回，开始处理写I/O事件。
+
+发送低潮限度：默认为2048字节
+
+在Nginx中的src/event/ngx_event.c代码中的ngx_send_lowat函数中进行了发送低潮限度：
+\starttyping
+setsockopt(c->fd, SOL_SOCKET, SO_SNDLOWAT, (const void *) &sndlowat, sizeof(int)
+\stoptyping
+
+SO_SNDLOWAT 是旧内核, 新的内核中SO_SNDLOWAT, 已经不存在了.
+
+
+
+
+
+
+
+
+
+
+
+\section{socksetopt SO_RCVBUF}
+
+
+  对于服务器而言，有部分socket选项只能在调用listen系统调用前针对监听socket设置才有效。
+  这是因为连接socket只能由accept调用返回，而accept从listen监听队列接受的连接至少已经
+  完成了TCP三次握手的前两个步骤（因为listen监听队列中的连接至少已进入SYN_RCVD状态），
+  这说明服务器已经往被接收连接上发送出了TCP同步报文段。
+  但有的socket选项却应该在TCP同步报文段中设置，比如TCP最大报文段选项。
+  对这种情况，linux给开发人员提供的解决方案是：对监听socket设置这些socket选项，
+  那么accept返回的连接socket将自动继承这些选项。
+  这些选项包括：SO_DEBUG、SO_DONTROUTE、SO_KEEPALIVE、SO_LINGER、SO_OOBINLINE、
+  SO_RCVBUF、SO_RCVLOWAT、SO_SNDBUF、SO_SNDLOWAT、TCP_MAXSEG和TCP_NODELAY。
+
+       对于客户端而言，这些socket选项则应该在调用connect函数之前设置，
+       因为connect调用成功返回之后，TCP三次握手已完成。
+
+tcp_conn_request@tcp_input.c 里实现这一点.
+
+\section{分析}
+目前的原因, 还没有定位到. 从这两天对于协议栈的分析来看, 猜测, 可能是在
+系统的内存不足的情况下(注意到, 在出现的问题的时候, /proc/net/sockstat 中记录的 tcp 的内存占用已经
+超出了 /proc/sys/net/ipv4/tcp_mem[1]) , 申请 262144 的内存空间可能失败了.
+
+并且, 观察到在没有设置 SO_SENDBUF 的情况下, 也会出现这一情况. 所以可以判断, 应该就是内存分配出现了问题.
+只是对于没有设置 SO_SENDBUF 的情况下, 系统会自动调整 buf 大小. 而设置了 SNDBUF 会让这一情况更加突出.
+
+但是实际上还有一些问题没有解决, 为什么会卡住? 能不能直接 reject 请求? 卡在哪里了? 这些问题, 可能要我
+继续深入研究才能明白.
+
+
+
+\section{参考}
+\goto{http://blog.csdn.net/ctthuangcheng/article/details/25595117}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

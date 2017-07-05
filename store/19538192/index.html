@@ -1,0 +1,195 @@
+<p>新协议的API使您能够扩展 Traffic Sever支持任意协议的Web代理服务器。
+本章介绍了新的协议的new protocol APIS以及支持新的协议插件。
+还提供了协议插件代码样本，支持一个非常简单的类似于HTTP的协议.</p>
+
+<h3>关于协议</h3>
+<p>这个简单的协议让 client 向服务器请求一个文件. 客户端发送请求到一个
+特定的Traffic Severport(在 plugin.config 中指定); 请求的样式如下:
+<pre>
+server_name file_name
+</pre>
+</p>
+
+<p>使用Protocol Plugin, Traffic Sever可以接收这些, 解析它们, 然后做为一个代码缓存.
+(从源服务器请求文件, 关保存一份响应信息到缓存).
+Protocol Plugin是一个按照下图中展示运行的状态机.
+本图展示了, Traffic Sever的运行, 以及Protocol Plugin对于协议的支持.
+<img src=http://i1.tietuku.com/c91eaca6b8b293e0.jpg ></p>
+
+<p>Protocol Plugin必须实现如下的功能:
+
+    <ul>
+
+        <li>监听, 接收 client 连接.
+
+        <li>读取 client 请求的数据.
+
+        <li>在缓存中查找 响应.
+
+        <li>从缓存中响应 client. (本例子中, 不对于过期进行检查)
+
+        <li>如果在缓存中没有找到的话, 打开一个到源站的连接.
+
+        <li>把请求转发给源服务器.
+
+        <li>从源站接收数据.
+
+        <li>缓存响应, 并把数据发送到 client.
+    </ul></p>
+
+<h3>Protocol Plugin结构</h3>
+<p>
+要理解Protocol Plugin如何工作, 你有必要理解一些更广泛的概念.
+本节, 假定你对于VConnection的概念很熟悉, 以及异步事件模型,
+基础的Traffic Sever插件结构.</p>
+
+<p></p>
+
+<h3>Protocol Plugin中的Continuations</h3>
+<p>Protocol Plugin创建一个静态的Continuations, 这是一个<b>"accept" state machine</b>.
+这是一个用于接收指定端口上客户端连接的状态机.
+当Traffic Sever在指定的端口上接收到一个客户端的网络连接.
+Accept State Machine会被激活. 它会创建一个新的Continuations: a transaction(交易) state machine.
+Accept State Machine为第一个事务 创建 transaction state machine状态机.
+每一个transaction state machine的生命周期直到整个响应完成, 然后会被销毁.
+如果 client 的请求没有缓存命中, transaction state machine有必要打开一个到源站的连接.
+下图展示了这个状态过程.</p>
+
+<p><img src=http://i1.tietuku.com/e8b1b31e06636046.jpg >
+现在编写一个Protocol Plugin的第一步就清楚了: 在<b>TSPluginInit</b>, 你必须
+创建一个Continuations, 用于监听指定端口上的连接.</p>
+
+<p>汇总:
+
+    <ul>
+
+        <li>Accept State Machine监听客户端连接. 然后当Traffic Sever接收一个新的客户端
+连接地的时候创建一个transaction state machine. Accept State Machine的生命周期与Traffic Sever的一样.
+
+        <li>transaction state machine要读取 client 请求, 处理它. 当处理结束的时候要被销毁.
+    </ul></p>
+
+<h3>事件流</h3>
+<p>对于Protocol Plugin的实现, 要求理解整个处理过程中的事件流的理解.
+不同于HTTP事务的插件，这个插件必须读取的网络连接数据，然后读/写数据到Traffic Server的缓存。
+这意味着，Continuations不接收HTTP状态机事件;
+他们收到来自Traffic Sever的处理器事件（处理器）子系统（子系统）。
+比如: Accept State Machine被Traffic Sever的网络处理进程的<b>TS_EVENT_NET_ACCEPT</b>事件激活;
+因此，处理函数的接受状态机必须能够处理该事件。</p>
+
+<p>当客户端的连接接收到请求, transaction state machine会被激活.
+Net Processor会把收到的数据传递给transaction state machine. transaction state machine会读取数据;
+当结束读取结束了, 它会开始在缓存中对于请求的文件进行查找.
+当查找完成了, transaction state machine会被 Cache Processor 给激活.</p>
+
+<p>如果transaction state machine要开启一个到源站的连接来得到内容, transaction state machine会初始化一个
+DNS 查找. transaction state machine之后会被 Host Database Processor 给激活.
+如果必要, transaction state machine会开启一个到源站的连接, 并等待 Net Processor 的一个事件.
+过程如下:
+<img src=http://i4.tietuku.com/ced7cf9f211375c8.jpg >
+请注意，此事件流是独立的协议插件的设计（比如，你是否接受建造或交易状态机）。
+支持网络连接的任何插件使用净vconnection接口
+（TSNetAccept，TSNetConnect），因此从网络处理器接收事件。
+任何插件执行缓存查找或高速缓存写入使用TSCacheRead，TSCacheWrite，TSVConnRead和TSVConnWrite从而从缓存处理器和Traffic Server的事件系统中接收事件。
+同样，做DNS查找任何插件接收来自 Host Database Processor事件。</p>
+
+<h3>One Way to Implement a Transaction State Machine</h3>
+<p>Protocol Plugin中的transaction state machine要完成以下的任务.</p>
+
+<p>
+    <ul>
+
+        <li>保持事务的状态跟踪
+
+        <li>处理接收到的事件（基于事务的状态和接收的事件）
+
+        <li>更新事务的状态，当它改变
+    </ul>
+下面是可以实现TSMS的一种方式。
+有关如何Protocol Plugin做到这一点的详细信息将在下一节提供。</p>
+
+<p>
+    <ul>
+
+        <li>创建一个数据结构，数据包含所有你需要跟踪的状态数据。
+在协议插件，这是一个结构，
+
+        <li>当你创建TSM的Continuations，初始化类型Txn_SM的数据。
+初始化数据到一个事务的初始状态（在这种情况下，一个网连接刚刚被接受）。
+使用TSContDataSet 把此数据关联到的TSM Continuations。
+
+        <li>写状态处理函数处理每个状态的预期的事件。
+
+        <li>编写TSM 的处理函数. 它的工作就是接收事件, 检查, 当前的状态.
+执行合适的状态处理函数. 在Protocol Plugin中, 这个处理函数是<b>main_handler</b>这个函数用于调用其它的状态处理函数处理每一个状态.
+    </ul></p>
+
+<p>下面的步骤描述执行的流程说明:
+
+    <ul>
+
+        <li>TSM 的处理函数(在这里是<b>main_handler</b>, 从TSM 接收事件.
+
+        <li><b>main_handler</b>检查事务的状态, 检查当前的 handler
+
+        <li><b>main_handler</b>调用 <b>current_handler</b>, 然后传递当前的事件到<b>current_handler</b>,
+在下图口, <b>current_handler</b>就是 <b>state2_handler</b>
+        <li><b>current_handler</b>处理事件, 并更新数据. 下图中, 状态从<b>state2</b>改变成
+<b>state3</b>(所以<b>current_handler</b>也从<b>state2_handler</b>变成了<b>state3_handler</b>).
+下一次<b>main_handler</b>收到事件, 会调用<b>state3_handler</b>进行处理.
+
+        <li><b>state2_handler</b>会安排下一次TSM 回调. 典型地, 给Traffic Sever增加
+一些工作(例如, 写文件到缓存中), 这样可以让Traffic Sever处理下一个状态.
+TSM(main_handler)会等待下一个事件的到达.
+    </ul></p>
+
+<p><img src=http://i1.tietuku.com/48256586c5b4118e.jpg ></p>
+
+<h3>Processing a Typical Transaction</h3>
+<p>源代码如在: &nbsp;<a href=https://github.com/apache/trafficserver/blob/master/example/protocol/TxnSM.c >protocol</a>&nbsp;Below is a step-by-step walk-through of the code that processes a typical transaction.</p>
+
+<p>
+    <ul>
+
+        <li>The TSPluginInit function is in the Protocol.c file. It checks the validity of the plugin.config entries (there must be two: a client accept port and a server port) and runs an initialization routine, init.
+
+        <li>The init function (in Protocol.c) creates the plugin’s log file using TSTextLogObjectCreate.
+
+        <li>The init function creates the accept state machine using AcceptCreate. The code for AcceptCreate is in the Accept.c file.
+
+        <li>The accept state machine, like the transaction state machine, keeps track of its state with a data structure. This data structure, Accept, is defined in the Accept.h file. State data in AcceptCreate is associated with the new accept state machine via TSContDataSet.
+
+        <li>The init function arranges the callback of the accept state machine when there is a network connection by using TSNetAccept.
+
+        <li>The handler for the accept state machine is accept_event in the Accept.c file. When Traffic Server’s Net Processor sends TS_EVENT_NET_ACCEPT to the accept state machine, accept_event creates a transaction state machine (txn_sm) by calling TxnSMCreate. Notice that accept_event creates a mutex for the transaction state machine, since each transaction state machine has its own mutex.
+
+        <li>The TxnSMCreate function is in the TxnSM.c file. The first thing it does is initialize the transaction’s data, which is of type TxnSM (as defined in TxnSM.h). Notice that the current handler (q_current_handler) is set to state_start.
+
+        <li>TxnSMCreate then creates a transaction state machine using TSContCreate. The handler for the transaction state machine is main_handler, which is in the TxnSM.c file.
+
+        <li>When accept_event receives TS_EVENT_NET_ACCEPT, it calls the transaction state machine ( TSContCall (txn_sm, 0, NULL); ). The event passed to main_handler is 0 (TS_EVENT_NONE).
+
+        <li>The first thing main_handler does is examine the current txn_sm state by calling TSContDataGet. The state is state_start.
+
+        <li>main_handler then invokes the handler for state_start by using the function pointer TxnSMHandler (as defined in TxnSM.h).
+
+        <li>The state_start handler function (in the TxnSM.c file) is handed an event (at this stage, the event is TS_EVENT_NET_ACCEPT) and a client vconnection. state_start checks to see if this client vconnection is closed; if it is not, then state_start attempts to read data from the client vconnection into an TSIOBuffer (state_start is handling the event it receives).
+
+        <li>state_start changes the current handler to state_interface_with_client (that is, it updates the state of the transaction to the next state).
+
+        <li>state_start initiates a read of the client vconnection (arranges for Traffic Server to send TS_EVENT_VCONN_READ_READY events to the TSM) by calling TSVConnRead.
+
+        <li>state_interface_with_client is activated by the next event from Traffic Server. It checks for errors and examines the read VIO for the read operation initiated by TSVConnRead.
+
+        <li>If the read VIO is the client_read_VIO (which we are expecting at this stage in the transaction), then state_interface_with_client updates the state to state_read_request_from_client .
+
+        <li>state_read_request_from_client handles actual TS_EVENT_READ_READY events and reads the client request.
+
+        <li>state_read_request_from_client parses the client request.
+
+        <li>state_read_request_from_client updates the current state to the next state, state_handle_cache_lookup .
+
+        <li>state_read_request_from_client arranges for Traffic Server to call back the TSM with the next set of events (initiating the cache lookup) by calling TSCacheRead.
+
+        <li>When the TSCacheRead sends the TSM either TS_EVENT_OPEN_READ (a cache hit) or TS_EVENT_OPEN_READ_FAILED (a cache miss), main_handler calls state_handle_cache_lookup.
+    </ul></p>

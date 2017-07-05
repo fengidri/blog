@@ -1,0 +1,71 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Title: tcp timestamps
+%Class: tcp
+%Post:1
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+用于开启是否使用 timestamps.
+
+在发起请求的时候在如下的位置会设置 OPTIONS_TS.
+\starttyping
+
+/* Compute TCP options for SYN packets. This is not the final
+ * network wire format yet.
+ */
+static unsigned int tcp_syn_options(struct sock *sk, struct sk_buff *skb,
+				struct tcp_out_options *opts,
+				struct tcp_md5sig_key **md5)
+{
+
+......
+	if (likely(sysctl_tcp_timestamps && !*md5)) {
+		opts->options |= OPTION_TS;
+		opts->tsval = tcp_skb_timestamp(skb) + tp->tsoffset;
+		opts->tsecr = tp->rx_opt.ts_recent;
+		remaining -= TCPOLEN_TSTAMP_ALIGNED;
+	}
+......
+}
+\stoptyping
+
+在收到的 syn 返回 synack 的情况下, 这个时候也就是一个协商的过程,
+所以这里会检查收到的 syn 的选项是不是包含有 OPTION_TS.
+这里的在 syn 的选项在解析到 OPTION_TS 的时间,
+也只有 sysctl_tcp_timestamps 为 true 的时候可以正确识别.
+
+tcp_make_synack --> tcp_options_write
+\starttyping
+static void tcp_options_write(__be32 *ptr, struct tcp_sock *tp,
+			      struct tcp_out_options *opts)
+{
+	u16 options = opts->options;	/* mungable copy */
+.......
+
+	if (likely(OPTION_TS & options)) {
+		if (unlikely(OPTION_SACK_ADVERTISE & options)) {
+			*ptr++ = htonl((TCPOPT_SACK_PERM << 24) |
+				       (TCPOLEN_SACK_PERM << 16) |
+				       (TCPOPT_TIMESTAMP << 8) |
+				       TCPOLEN_TIMESTAMP);
+			options &= ~OPTION_SACK_ADVERTISE;
+		} else {
+			*ptr++ = htonl((TCPOPT_NOP << 24) |
+				       (TCPOPT_NOP << 16) |
+				       (TCPOPT_TIMESTAMP << 8) |
+				       TCPOLEN_TIMESTAMP);
+		}
+		*ptr++ = htonl(opts->tsval);
+		*ptr++ = htonl(opts->tsecr);
+	}
+.......
+}
+\stoptyping
+
+另补充一个有意思的事情, 我们知道在 timestamp 开启的时候, 如果服务器开启了
+tw_recycle 如果机器在 net 后面, 就有可能出错. 我在测试的时候发现.
+virtualbox 的 net 会删除 tcp 的 timestamp 选项.
+
+
+
+
+

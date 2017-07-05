@@ -1,0 +1,10 @@
+<p> systemd总是会做很多事, 给我的感觉就是给用户做了很多决策.</p>
+
+<p> 最近发现, systemd会自动把/tmp 做为tmpfs进行挂载. 即使你在fstab中
+ 没有进行设置.</p>
+
+<p> 我不太喜欢这样啦. 一个关闭的方法是
+<pre>
+systemctl mask tmp.mount
+</pre>
+</p>

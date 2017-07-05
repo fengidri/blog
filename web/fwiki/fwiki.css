@@ -1,0 +1,277 @@
+*{
+    margin:0;
+}
+body{
+    width:100%;
+    font-size:13pt;
+    letter-spacing: 1px;
+}
+a{
+    color:black;
+}
+#index, #chapter{
+    display:none;
+}
+div#h2, div#h3, div#h4, div#h5, div#h6{
+    cursor:pointer;
+}
+div#h2:hover, div#h3:hover, div#h4:hover, div#h5:hover, div#h6:hover{
+    color:green;
+}
+div#h2{
+    text-indent:0em;
+}
+div#h3{
+    text-indent:1em;
+}
+div#h4{
+    text-indent:2em;
+}
+div#h5{
+    text-indent:3em;
+}
+div#h6{
+    text-indent:4em;
+}
+h1#title{
+    margin: auto;
+    margin-top: 2em;
+    text-align: center;
+}
+div#title
+{
+    margin:2em;
+    font-size:15pt;
+    margin-bottom: 1em;
+    padding-left: 0;
+    margin-left: 0;
+}
+div#title a{
+    color:grey;
+    border-bottom: solid 1px  #d3d3d3;
+    text-decoration: none;
+}
+#content h1
+{
+    color:green;
+}
+h2#ctitle{
+    margin:0 0 5 0;
+    font-size:18pt;
+}
+h2#ctitle a{
+    text-decoration: none;
+}
+#content h2
+{
+    margin-top:30pt;
+    font-size:30pt;
+    text-align:center
+}
+#content h3
+{
+    font-size:20pt;
+    color:black;
+    counter-increment: counter_section;
+    counter-reset:counter_subsection;
+    margin-top:3em;
+    border-bottom: solid 4px  green;
+}
+#content h3:first-of-type
+{
+    margin-top:0em;
+}
+#content h3:before
+{
+    content:counter(counter_section) '. ';
+}
+#content h4
+{
+    margin-top:3em;
+    font-size:15pt;
+    color:black;
+    counter-reset:counter_subsubsection;
+    counter-increment: counter_subsection;
+}
+#content h4:first-of-type{
+    margin-top:0em;
+}
+#content h4:before
+{
+    content:counter(counter_section)'.'counter(counter_subsection) '. ';
+}
+#content h5
+{
+    font-size:12pt;
+    counter-increment: counter_subsubsection;
+    margin-top:3em;
+}
+#content h5:first-of-type{
+    margin-top:0em;
+}
+#content h5:before
+{
+    content:counter(counter_section)'.'
+    counter(counter_subsection)'.'
+    counter(counter_subsubsection)'. ';
+}
+
+
+/*用于目录的整体*/
+#index_switch
+{
+    top:3em;
+    left:1em;
+    position:fixed;
+    cursor:pointer;
+}
+#index
+{
+    top:6em;
+    left:1em;
+    position:fixed;
+    border-width:1px;
+    border-style:solid;
+    background-color:white;
+    padding: 1em 1em 1em 0;
+}
+#class_container{
+    top:6em;
+    right:3em;
+    position:fixed;
+    border-width:1px;
+    border-style:solid;
+    background-color:white;
+    padding: 1em 1em 1em 1em;
+    text-align: center;
+}
+#class_container h3{ }
+#class_div{
+    float: left;
+}
+
+#class_div div{
+    margin-top:6px;
+    cursor:pointer;
+    text-align: left;
+    padding: 6px;
+    border: 2px solid;
+    border:2px solid;
+
+    border-radius:5px;
+    -moz-border-radius:5px; /* Old Firefox */
+}
+
+#class_div div span{
+    float: right;
+    margin-left: 1em;
+    font-size:  10px;
+    font-color: grey;
+
+}
+
+#index_close{
+    top:3em;
+    left:1em;
+    width: 45px;
+    height: 45px;
+    background: transparent url(/images/toolbar.gif) 0 0 no-repeat;
+    position:fixed;
+    cursor:pointer;
+}
+#wrap{
+    max-width:      1000px;
+    width: 90%;
+    margin:     auto;
+}
+#listpost{
+    width:      700px;
+    margin:     auto;
+    min-height: 800px;
+    padding:    2em;
+    margin-top: 5em;
+    white-space: nowrap;
+}
+#chapter{
+    border:     0px     solid;
+    margin:     auto;
+    min-height: 800px;
+    padding:    2em;
+}
+#chapter #content{
+    /*border:     1px     solid;*/
+}
+#listpost div{
+    width:      85%;
+    /*border:     1px solid;
+    border:     0px     solid;
+    border-bottom:     1px     solid;
+    */
+    display:    block;
+    margin:     auto;
+    padding:    1em;
+    font-size:  15px;
+    text-align: left;
+    cursor:     pointer;
+    padding-bottom: 3px;
+}
+#listpost div span{
+    margin: 2em;
+}
+#edit{
+    position:fixed;
+    top:1em;
+    right:1em;
+    width:      100px;
+    border:     1px solid;
+    text-align: center;
+    display:none;
+}
+
+#header{
+    margin: auto;
+    /* display: inline; */
+    /* width: 300px; */
+    text-align: center;
+    padding-left: 10em;
+    font-size: 20pt;
+}
+
+
+div#buttom{
+    margin-bottom: 9em;
+    text-align: center;
+
+
+}
+#layer_option{
+    display:none;
+}
+#layer_option input{
+    width: 400px;
+    line-height:2.5;
+}
+.ds-thread{
+    border: 1px solid;
+    margin-top: 3em;
+    padding: 1em;
+    background-color: #eee;
+}
+#chapter img{
+    display: block;
+    margin:auto;
+}
+#page{
+  padding: 1em;
+  font-style: italic;
+  font-size: 20pt;
+  position: absolute;
+  display: none;
+
+}
+#infos{
+    color:grey;
+}
+img{
+   max-width: 85%;
+}

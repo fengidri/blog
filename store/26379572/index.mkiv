@@ -1,0 +1,35 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Title: vim copy via ssh
+%Class:
+%Post:1
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+当通过 ssh 开启 vim 的时候 有没有办法把内容通过 vim 复制出来呢?
+
+vim 工作在 term 中, vim 本质是通过输出流与 term 进行控制的.
+term 一个特点就是通过对于文本流进行检查, 对于一些特别的输出流会由 term 进行一些特殊的处理工作.
+这些特殊的文本流就是我们说的转义序列. 那么一个思路就是, 由服务器上的vim 输出一段文本到 term,
+term 得到这些文本流, 把这个些指定的文本放到 clipboard.
+
+从这个流程来看, 有两个问题, 1是如何输出文本流, 同时不能影响当前在编辑的内容.
+2. term 要支持这样的行为.
+
+第二个问题, 我现在使用的是 iterm2, 这个终端支持如下的方法:
+\starttyping
+To place text in the pasteboard:
+
+^[]50;CopyToClipboard=name^G
+
+Where name is one of "rule", "find", "font", or empty to mean
+the general pasteboard (which is what you normally want).
+After this is sent, all text received is placed in the pasteboard
+until this code comes in:
+
+^[]50;EndCopy^G
+\stoptyping
+
+哪么问题就只有一个了, 如何从 vim 输出 stream 呢?
+
+如下的插件实现了这个功能:
+\goto{CopyToItem2}{https://github.com/fengidri/wind/blob/master/exts/copy_to_term.py}

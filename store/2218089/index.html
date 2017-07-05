@@ -1,0 +1,40 @@
+
+当前的版本是MurmurHash3,能够产生出32-bit或128-bit哈希值。</p><p>较早的MurmurHash210能产生32-bit或64-bit哈希值。对于大端存储和强制对齐的硬件环境有一个较慢的MurmurHash2可以用。MurmurHash2A 变种增加了Merkle–Damgård 构造，所以能够以增量方式调用。 有两个变种产生64-bit哈希值：MurmurHash64A，为64位处理器做了优化；MurmurHash64B，为32位处理器做了优化。MurmurHash2-160用于产生160-bit 哈希值，而MurmurHash1已经不再使用。 </p><p>最初的实现是C++的，但是被移植到了其他的流行语言上，包括 Python, C,C, Perl, Ruby, PHP, Haskell,Scala、Java和 JavaScript等。</p><p>这个算法已经被若干开源计划所采纳，最重要的有libstdc++ (4.6版)、Perl、nginx (不早于1.0.1版)、Rubinius、 libmemcached (Memcached的C语言客户端驱动)、maatkit、Hadoop、Kyoto Cabinet以及RaptorDB, Redis。算法</p><p><pre>Murmur3_32(key, len, seed)
+    c1  0xcc9e2d51
+    c2  0x1b873593
+    r1  15
+    r2  13
+    m  5
+    n  0xe6546b64
+ 
+    hash  seed
+
+    for each fourByteChunk of key
+        k  fourByteChunk
+
+        k  k * c1
+        k  (k &lt;&lt; r1) OR (k &gt;&gt; (32-r1))
+        k  k * c2
+
+        hash  hash XOR k
+        hash  (hash &lt;&lt; r2) OR (hash &gt;&gt; (32-r2))
+        hash  hash * m + n
+
+    with any remainingBytesInKey
+        remainingBytes  SwapEndianOrderOf(remainingBytesInKey)
+        remainingBytes  remainingBytes * c1
+        remainingBytes  (remainingBytes &lt;&lt; r1) OR (remainingBytes &gt;&gt; (32 - r1))
+        remainingBytes  remainingBytes * c2
+
+        hash  hash XOR remainingBytes
+ 
+    hash  hash XOR len
+
+    hash  hash XOR (hash &gt;&gt; 16)
+    hash  hash * 0x85ebca6b
+    hash  hash XOR (hash &gt;&gt; 13)
+    hash  hash * 0xc2b2ae35
+    hash  hash XOR (hash &gt;&gt; 16)
+
+</pre>
+<p>

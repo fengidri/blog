@@ -1,0 +1,95 @@
+%Title: SSD 固态硬盘的使用
+%Class: linux
+%Post:1
+
+
+\section{前言}
+最近入手一个SSD 硬盘, 学习一下SSD的使用注意事项. 其实也没有必要太在意, 一般而言对于桌面用户而言SSD的
+使用寿命是足够的. 是我们使用SSD 而不是SSD 使用我们对吧!!
+
+由于生产环境的需求通常各不相同，配置难以一概而论，这里主要讨论使用SSD的桌面Linux环境配置。
+
+\section{分区对齐}
+使用多数现代分区工具分区的硬盘，一般是已经对齐的。如在较新的GParted中，新建分区的默认对齐方式就是 MiB（有些版本的GParted翻译作“排序”）。
+
+检验是否分区已正确对齐，可以通过 fdisk -l 命令（仅适用于使用MBR格式分区表)或 GParted 获取分区的首扇区，
+由于逻辑扇区的大小一般是 512 字节，如果首扇区的扇区号是 1024 的倍数，则分区已向 512KiB 对齐，
+如果首扇区号是 2048 的倍数，则分区已向 1MiB 对齐。如：
+\starttyping
+$ sudo fdisk -l
+Disk /dev/sdb: 96.0 GB, 96029466624 bytes
+255 heads, 63 sectors/track, 11674 cylinders, total 187557552 sectors
+Units = 扇区 of 1 * 512 = 512 bytes
+Sector size (logical/physical): 512 bytes / 512 bytes
+I/O size (minimum/optimal): 512 bytes / 512 bytes
+Disk identifier: 0x00018744
+
+   设备 Boot      Start         End      Blocks   Id  System
+/dev/sdb1            2048    62629887    31313920   83  Linux
+/dev/sdb2        62629888   103606271    20488192   83  Linux
+/dev/sdb3       103606272   144742399    20568064   83  Linux
+/dev/sdb4       144742400   167077887    11167744   83  Linux
+\stoptyping
+上例中，部分均为 2048 的倍数，说明分区已对齐。如果发现分区不幸未对齐，则可能需要删除分区重新来过了。
+
+如果使用较新的GPT格式的分区表，则需要用gdisk查看。
+
+\section{挂载选项}
+开发中的btrfs正在试图对 SSD 硬盘做专门的优化，用户可以通过-o ssd挂载选项启用[8]。
+
+另一个在很多教程中出现的选项是-o discard，该选项可用于 ext4 和 btrfs 文件系统，
+作用是在删除文件时实时发出 TRIM 指令，以期加快以后写数据的速度。
+值得注意的是，该指令的效果是受到严重怀疑的。2011年中旬的数据表明， discard 选项非但没有提升 SSD 的效率，反而使其变慢了。
+Btrfs的-o ssd选项也不会启用discard。 相比之下，定时发送 TRIM 指令可能是更好的选择。
+
+noatime（或relatime）, nodiratime是另外两个可以考虑的挂载选项，它们防止在读文件时更改文件的“最近访问”时间戳，减少写入硬盘的次数。
+数据显示，采用noatime选项后，在编译Linux内核的过程中，硬盘写入量比没使用时少了约 13\% 。
+请依照数据自行权衡利弊。值得注意的是，noatime可能会导致某些依赖时间戳的程序产生问题，因此现在通常relatime代替。
+
+\section{定时trim}
+虽然实时TRIM选项-o discard效果并不好，但定期对已删除的文件做TRIM还是有意义的[12]，如：
+\starttyping
+# 告知硬盘分区"/"中的哪些块已不再被使用
+fstrim -v /
+\stoptyping
+
+
+
+\section{I/O 调度方案}
+默认的I/O调度一般针对磁盘寻址慢的特性做了专门优化，
+但对于SSD而言，由于访问磁盘不同逻辑扇区的时间几乎是一样的，这个优化就没有什么作用了，反而耗费了CPU时间。
+具体到 Linux 系统中，就是用 Noop 调度器 （直接把所有 I/O 请求送到一个队列中）代替内核默认的 CFQ 调度器。
+
+查看某设备当前使用的调度器的方法是：
+\starttyping
+$ cat /sys/block/sdX/queue/scheduler
+noop deadline [cfq]
+\stoptyping
+而下面的命令可以设置sdX的调度器为noop。
+\starttyping
+echo noop > /sys/block/sdX/queue/scheduler
+\stoptyping
+当然这种做法也是可以的, 使用内核参数. 但是要修改引导文件. 下面的是 syslinux 的配置文件:
+\starttyping
+LABEL arch
+    MENU LABEL Arch Linux
+    LINUX ../vmlinuz-linux
+    APPEND root=/dev/sda2 rw elevator=noop
+    INITRD ../initramfs-linux.img
+\stoptyping
+\section{tmpfs tmp}
+这个其它与SSD 没有太大的关系, 但是可以SSD的人大概不会在意内存的价格了, 所以
+他们的内存可能也比较大.
+
+在内存比较大的情况下, 一方面可以减小数据的写入, 另一方面可以加快程序的动行,
+也可以做到内存资源的充分应用.
+
+一般是把tmp 目录使用tmpfs来实现.在fstab 中增加:
+\starttyping
+tmpfs                   /tmp            tmpfs           nodev,nosuid,size=512m                  0 0
+\stoptyping
+
+
+
+
+\goto {SSD\_(固态硬盘)} {http://linux-wiki.cn/wiki/zh-hans/SSD\_(\%E5\%9B\%BA\%E6\%80\%81\%E7\%A1\%AC\%E7\%9B\%98)}

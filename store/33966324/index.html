@@ -1,0 +1,108 @@
+<p>
+在进行代码调度的时候经常会出现一些变量被优化掉了, 这个时候没有办法看到这些变量了.</p>
+
+<p>唯一的方法就是通过查看汇编原码得到运行的状态, 变量放置的寄存器.</p>
+
+<p>一般的 ELF 的方法是通过 nm 得到函数的地址, 再通过 objdump 的
+如下两个参数得到函数的汇编代码:
+<pre>
+--start-address
+--stop-address
+</pre>
+</p>
+
+<p>但是对于内核好像会出现问题.</p>
+
+<p>那是因为 vmlinuz 是压缩之后的内核文件.
+所以我们的第一步就要把内核文件解压出来.
+如下方法:
+<pre>
+vagrant-13&gt;&gt;file vmlinuz-linux-lily
+vmlinuz-linux-lily: Linux kernel x86 boot executable bzImage, version 4.2.1-1-lily (lilydjwg@build.archlinuxcn.org) #11 SMP PREEMPT T, RO-rootFS, swap_dev 0x5, Normal VGA
+
+vagrant-13&gt;&gt;od -t x1 -A d vmlinuz-linux-lily | grep "1f 8b 08" # bzImage(big zImage) 的开头有一段自解压的代码, 要跳过
+0018864 ac fe ff ff 1f 8b 08 00 00 00 00 00 02 03 ec dd
+
+vagrant-13&gt;&gt;dd if=vmlinuz-linux-lily bs=1 skip=18868  | zcat &gt; /tmp/vmlinux-lily
+gzip: stdin: decompression OK, trailing garbage ignored
+
+vagrant-13&gt;&gt;file /tmp/vmlinux-lily
+/tmp/vmlinux-lily: ELF 64-bit LSB executable, x86-64, version 1 (SYSV), statically linked, BuildID[sha1]=b56fca0772b456df9db35fad7c701d3e9dca6398, stripped
+</pre>
+</p>
+
+<p>这样完成了内核文件的解压操作.
+而一般符号表是放在 /boot 下的 System.map 文件. 从这个里找到要的函数的地址与下一个f函数的地址如:
+<pre>
+vagrant-13&gt;&gt;grep retransmits_timed_out -A1 System.map-4.2.1-1-lily
+ffffffff814ee590 t retransmits_timed_out
+ffffffff814ee650 T tcp_init_xmit_timers
+</pre>
+</p>
+
+<p>这样就可以从内核中得到指定的函数的汇编代码了:
+<pre>
+vagrant-13&gt;&gt;objdump /tmp/vmlinux-lily -S -d  --start-address=0xffffffff814ee590 --stop-address=0xffffffff814ee650
+
+/tmp/vmlinux-lily:     file format elf64-x86-64
+
+
+Disassembly of section .text:
+
+ffffffff814ee590 &lt;.text+0x4ee590&gt;:
+ffffffff814ee590:	e8 3b 58 0a 00       	callq  0xffffffff81593dd0
+ffffffff814ee595:	80 f9 01             	cmp    $0x1,%cl
+ffffffff814ee598:	55                   	push   %rbp
+ffffffff814ee599:	45 19 c0             	sbb    %r8d,%r8d
+ffffffff814ee59c:	31 c0                	xor    %eax,%eax
+ffffffff814ee59e:	41 80 e0 10          	and    $0x10,%r8b
+ffffffff814ee5a2:	48 89 e5             	mov    %rsp,%rbp
+ffffffff814ee5a5:	41 81 c0 2c 01 00 00 	add    $0x12c,%r8d
+ffffffff814ee5ac:	80 bf d1 04 00 00 00 	cmpb   $0x0,0x4d1(%rdi)
+ffffffff814ee5b3:	74 45                	je     0xffffffff814ee5fa
+ffffffff814ee5b5:	44 8b 8f 54 07 00 00 	mov    0x754(%rdi),%r9d
+ffffffff814ee5bc:	45 85 c9             	test   %r9d,%r9d
+ffffffff814ee5bf:	74 61                	je     0xffffffff814ee622
+ffffffff814ee5c1:	85 d2                	test   %edx,%edx
+ffffffff814ee5c3:	75 26                	jne    0xffffffff814ee5eb
+ffffffff814ee5c5:	31 d2                	xor    %edx,%edx
+ffffffff814ee5c7:	b8 a0 8c 00 00       	mov    $0x8ca0,%eax
+ffffffff814ee5cc:	b9 ff ff ff ff       	mov    $0xffffffff,%ecx
+ffffffff814ee5d1:	41 f7 f0             	div    %r8d
+ffffffff814ee5d4:	0f bd c8             	bsr    %eax,%ecx
+ffffffff814ee5d7:	39 f1                	cmp    %esi,%ecx
+ffffffff814ee5d9:	ba 02 00 00 00       	mov    $0x2,%edx
+ffffffff814ee5de:	72 1c                	jb     0xffffffff814ee5fc
+ffffffff814ee5e0:	89 f1                	mov    %esi,%ecx
+ffffffff814ee5e2:	d3 e2                	shl    %cl,%edx
+ffffffff814ee5e4:	83 ea 01             	sub    $0x1,%edx
+ffffffff814ee5e7:	41 0f af d0          	imul   %r8d,%edx
+ffffffff814ee5eb:	48 8b 05 0e ca 71 00 	mov    0x71ca0e(%rip),%rax        # 0xffffffff81c0b000
+ffffffff814ee5f2:	44 29 c8             	sub    %r9d,%eax
+ffffffff814ee5f5:	39 c2                	cmp    %eax,%edx
+ffffffff814ee5f7:	0f 96 c0             	setbe  %al
+ffffffff814ee5fa:	5d                   	pop    %rbp
+ffffffff814ee5fb:	c3                   	retq
+ffffffff814ee5fc:	d3 e2                	shl    %cl,%edx
+ffffffff814ee5fe:	29 ce                	sub    %ecx,%esi
+ffffffff814ee600:	48 8b 05 f9 c9 71 00 	mov    0x71c9f9(%rip),%rax        # 0xffffffff81c0b000
+ffffffff814ee607:	83 ea 01             	sub    $0x1,%edx
+ffffffff814ee60a:	44 0f af c2          	imul   %edx,%r8d
+ffffffff814ee60e:	69 f6 a0 8c 00 00    	imul   $0x8ca0,%esi,%esi
+ffffffff814ee614:	44 29 c8             	sub    %r9d,%eax
+ffffffff814ee617:	41 8d 14 30          	lea    (%r8,%rsi,1),%edx
+ffffffff814ee61b:	39 c2                	cmp    %eax,%edx
+ffffffff814ee61d:	0f 96 c0             	setbe  %al
+ffffffff814ee620:	eb d8                	jmp    0xffffffff814ee5fa
+ffffffff814ee622:	48 8b 87 30 01 00 00 	mov    0x130(%rdi),%rax
+ffffffff814ee629:	48 81 c7 30 01 00 00 	add    $0x130,%rdi
+ffffffff814ee630:	b9 00 00 00 00       	mov    $0x0,%ecx
+ffffffff814ee635:	48 39 f8             	cmp    %rdi,%rax
+ffffffff814ee638:	48 0f 44 c1          	cmove  %rcx,%rax
+ffffffff814ee63c:	44 8b 48 14          	mov    0x14(%rax),%r9d
+ffffffff814ee640:	e9 7c ff ff ff       	jmpq   0xffffffff814ee5c1
+ffffffff814ee645:	90                   	nop
+ffffffff814ee646:	66 2e 0f 1f 84 00 00 	nopw   %cs:0x0(%rax,%rax,1)
+ffffffff814ee64d:	00 00 00
+</pre>
+</p>

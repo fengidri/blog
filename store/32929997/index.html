@@ -1,0 +1,44 @@
+<p></p>
+
+<p>systemtap 里可以使用 print_backtrace 打印堆栈, 只是这个堆栈是, 内核空间的. 我们如果是对于
+应用进行研究的时候我们关心是的是用户态的, 使用如下的函数:
+<pre>
+    print_ustack(ubacktrace());
+</pre>
+
+输出如下:
+<pre>
+0x6a8d60 : _Z12ink_aio_readP11AIOCallbacki+0x0/0xc0 [...ant/trafficserver/trafficserver-4.2.3/ats/bin/traffic_server]
+ 0x659da6 : _ZN7CacheVC10handleReadEiP5Event+0x526/0xbb0 [...ant/trafficserver/trafficserver-4.2.3/ats/bin/traffic_server]
+ 0x685085 : _ZN7CacheVC12openReadMainEiP5Event+0x1445/0x1850 [...ant/trafficserver/trafficserver-4.2.3/ats/bin/traffic_server]
+ 0x60bb1e : _ZN7CacheVC8callcontEi+0x8e/0xc0 [...ant/trafficserver/trafficserver-4.2.3/ats/bin/traffic_server]
+ 0x687afa : _ZN7CacheVC21openReadStartEarliestEiP5Event+0xdfa/0x1780 [...ant/trafficserver/trafficserver-4.2.3/ats/bin/traffic_server]
+ 0x65b23b : _ZN7CacheVC14handleReadDoneEiP5Event+0x1fb/0x1260 [...ant/trafficserver/trafficserver-4.2.3/ats/bin/traffic_server]
+ 0x61024f : _ZN19AIOCallbackInternal11io_completeEiPv+0x16f/0x1f0 [...ant/trafficserver/trafficserver-4.2.3/ats/bin/traffic_server]
+ 0x6a8a6b : _ZN11DiskHandler12mainAIOEventEiP5Event+0x24b/0x2d0 [...ant/trafficserver/trafficserver-4.2.3/ats/bin/traffic_server]
+ 0x6e9c6a : _ZN7EThread7executeEv+0x58a/0x1360 [...ant/trafficserver/trafficserver-4.2.3/ats/bin/traffic_server]
+ 0x6e8785 : _ZL21spawn_thread_internalPv+0x55/0x60 [...ant/trafficserver/trafficserver-4.2.3/ats/bin/traffic_server]
+ 0x2b64691914a4 : start_thread+0xc4/0x3a0 [/usr/lib/libpthread-2.22.so]
+ 0x2b646a28f13d : clone+0x6d/0x90 [/usr/lib/libc-2.22.so]
+</pre>
+
+这个程序是 ats, 使用 C++ 所以看起来比较乱, 可以使用 c++filt 过滤一下, 如下:</p>
+
+<p><pre>
+0x6a8d60 : ink_aio_read(AIOCallback*, int)+0x0/0xc0 [...ant/trafficserver/trafficserver-4.2.3/ats/bin/traffic_server]
+ 0x659da6 : CacheVC::handleRead(int, Event*)+0x526/0xbb0 [...ant/trafficserver/trafficserver-4.2.3/ats/bin/traffic_server]
+ 0x685085 : CacheVC::openReadMain(int, Event*)+0x1445/0x1850 [...ant/trafficserver/trafficserver-4.2.3/ats/bin/traffic_server]
+ 0x60bb1e : CacheVC::callcont(int)+0x8e/0xc0 [...ant/trafficserver/trafficserver-4.2.3/ats/bin/traffic_server]
+ 0x687afa : CacheVC::openReadStartEarliest(int, Event*)+0xdfa/0x1780 [...ant/trafficserver/trafficserver-4.2.3/ats/bin/traffic_server]
+ 0x65b23b : CacheVC::handleReadDone(int, Event*)+0x1fb/0x1260 [...ant/trafficserver/trafficserver-4.2.3/ats/bin/traffic_server]
+ 0x61024f : AIOCallbackInternal::io_complete(int, void*)+0x16f/0x1f0 [...ant/trafficserver/trafficserver-4.2.3/ats/bin/traffic_server]
+ 0x6a8a6b : DiskHandler::mainAIOEvent(int, Event*)+0x24b/0x2d0 [...ant/trafficserver/trafficserver-4.2.3/ats/bin/traffic_server]
+ 0x6e9c6a : EThread::execute()+0x58a/0x1360 [...ant/trafficserver/trafficserver-4.2.3/ats/bin/traffic_server]
+ 0x6e8785 : spawn_thread_internal(void*)+0x55/0x60 [...ant/trafficserver/trafficserver-4.2.3/ats/bin/traffic_server]
+ 0x2b64691914a4 : start_thread+0xc4/0x3a0 [/usr/lib/libpthread-2.22.so]
+ 0x2b646a28f13d : clone+0x6d/0x90 [/usr/lib/libc-2.22.so]
+</pre>
+
+每一行开头的是 位置, 可以使用 addr2line 得到.</p>
+
+<p>更多的信息可以从 /usr/share/systemtap/tapset/linux 下的 ucontext-symbols.stp ucontext-unwind.stp 得到.</p>

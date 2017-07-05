@@ -1,0 +1,24 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Title: ngx cache
+%Class:
+%Post:0
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+ngx_http_file_cache.c
+
+
+
+
+
+ngx_http_upstream_init
+    ngx_http_upstream_init_request
+
+        ngx_http_upstream_cache
+                   # get cache/file_cache
+
+            ngx_http_file_cache_open
+                     # 复制 path
+
+                     # 打开文件 r->cache->file.name
+                gx_http_file_cache_read

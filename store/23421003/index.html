@@ -1,0 +1,32 @@
+<p>
+文件:
+
+    <ul>
+
+        <li>2.5M : curl 111.11.152.62/2.5M -H'Host: test13.b0.upaiyun.com' -o /dev/null
+
+        <li>108M : curl 111.11.152.62/100M -H'Host: test13.b0.upaiyun.com' -o /dev/null
+    </ul></p>
+
+<p><img src=/store/images/stevens-100M-cache.png ><img src=/store/images/stevens-100M-nocache.png ><img src=/store/images/stevens-2.5-cache.png ><img src=/store/images/stevens-2.5-nocache.png >
+
+    <ul>
+
+        <li>没有命中的情况下, 开始响应的时间会慢一些.
+
+        <li>下载过程总是有中断的情况出现.
+
+        <li>对于100M 的文件而言, 前12 s 是一个慢启动的过程. 之后才会呈示线性的增长过程.
+说明我们的下载中, 慢启动的过程比较长.</p>
+
+<p>
+        <li>所以大文件的下载速度比较快. 小文件的下载过程中还没处在慢启动的过程中.
+
+        <li>目前2.5M 的速度在800K 左右, 而100M 的文件速度在命中的情况下
+是9000K 而没有命中的情况下是4652K.
+也可以看出来, 小文件对于命中没有不是太影响的.
+
+        <li>大文件中断续的情况也是存在的.
+
+        <li>在缓存住的情况下, 慢启动的过程比较短.
+    </ul></p>

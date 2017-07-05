@@ -1,0 +1,143 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Title: 内核模块使用proc 文件系统
+%Class: kernel
+%Post:1
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{前言}
+本文只是简单实现一个对于proc 文件进行使用的例子.
+并且使用的是sequence file 的接口. 这个是对于过去的proc 文件的接口
+的抽象使用起来更加方便.
+
+\section{实现步骤}
+\subsection{show}
+\starttyping
+static int
+hz_show(struct seq_file *m, void *v)
+{
+    printk(KERN_INFO "HZ_SHOW\n");
+    seq_printf(m, "%d\n", HZ);
+    return 0;
+}
+\stoptyping
+正如你所理解的, 这用于把数据输出. 通过 \bold{seq_printf()}
+把格式化好的数据写入到的 sequencd file 结构体. 并返回0 表示成功.
+
+
+
+\subsection{open}
+处理很简单直接调用 single_open 就可以了.
+
+\subsection{file_operations structure}
+\def\fs{file_operations structure}
+下面就是处理 \fs, 这个是代码的核心了:
+\starttyping
+static const struct file_operations hz_fops = {
+    .owner      = THIS_MODULE,
+    .open       = hz_open,
+    .read       = seq_read,
+    .llseek     = seq_lseek,
+    .release    = single_release,
+};
+\stoptyping
+这个结构体定义于\bold{fs.h} 中, 是为各种文件的所定义的各种操作的集合, 并不只是
+sequence files.
+\def\sf{sequence files}.
+而\sf 作为一种默认的文件类型, 你可以忽略结构体中的很多个域.
+
+上面的那个定义, 其实只用定义open 一个操作就可以了, 其它的都是\fs 的默认值.
+(而实际上, 你可以不用定义 llseek, 因为操作的数据太短了, 不没有必要
+自己实现 seeking. 当然你显示地定义了它也是很好的.)
+
+\subsection{init and exit}
+\starttyping
+static int __init
+hz_init(void)
+{
+    printk(KERN_INFO "Loading hz module, HZ = %d.\n", HZ);
+    proc_create("hz", 0, NULL, &hz_fops);
+    return 0;
+}
+
+static void __exit
+hz_exit(void)
+{
+    remove_proc_entry("hz", NULL);
+    printk(KERN_INFO "Unloading hz module.\n");
+}
+\stoptyping
+你可以在模块初始化与退出的时候创建并删除 proc file.
+
+在接口\bold{proc_create} 的第二个参数表示了文件的权限.
+这里的0 表示的是\bold{0444}. 设置proc file 的权限为 0444
+是很常见的做法.
+
+而在\bold{proc_create} 与\bold{remove_proc_entry} 都有一个参数
+NULL, 这个参数表示proc 文件系统中的父目录. 而NULL 则表示就是\bold{
+/proc}.
+
+
+\section{HZ}
+\startitemize
+\item HZ      定义了时钟中断的频率，即每秒钟时钟中断的次数
+\item jiffies  记录了自启动后，时钟中断发生的次数
+\stopitemize
+
+
+
+
+
+\section{代码}
+\starttyping
+#include <linux/module.h>
+#include <linux/init.h>
+#include <linux/kernel.h>
+#include <linux/fs.h>
+#include <linux/proc_fs.h>
+#include <linux/seq_file.h>
+
+#define FILE_NAME "hz/hz"
+
+static int
+hz_show(struct seq_file *m, void *v)
+{
+    printk(KERN_INFO "HZ_SHOW\n");
+    seq_printf(m, "%d\n", HZ);
+    return 0;
+}
+
+static int
+hz_open(struct inode *inode, struct file *file)
+{
+    printk(KERN_INFO "HZ_OPEN\n");
+    return single_open(file, hz_show, NULL);
+}
+
+static const struct file_operations hz_fops = {
+    .owner      = THIS_MODULE,
+    .open       = hz_open,
+    .read       = seq_read,
+    .llseek     = seq_lseek,
+    .release    = single_release,
+};
+
+static int __init
+hz_init(void)
+{
+    printk(KERN_INFO "Loading hz module, HZ = %d.\n", HZ);
+    proc_create(FILE_NAME, 0, NULL, &hz_fops);
+    return 0;
+}
+
+static void __exit
+hz_exit(void)
+{
+    remove_proc_entry(FILE_NAME, NULL);
+    printk(KERN_INFO "Unloading hz module.\n");
+}
+
+module_init(hz_init);
+module_exit(hz_exit);
+
+MODULE_LICENSE("GPL");
+
+\stoptyping

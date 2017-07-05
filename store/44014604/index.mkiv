@@ -1,0 +1,66 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Title: kernel 模块引用计数
+%Class: kernel
+%Post:1
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+kernel 模块在使用中, 是不可以被 rm 的. 而模块在不在使用中是通过 模块的\bold{引用计数}判断地, 可以在 lsmod 的时候看到.
+
+2.4内核中，模块自身通过 MOD_INC_USE_COUNT, MOD_DEC_USE_COUNT 宏来管理自己被使用的计数。
+通常我们在写模块时，会在open方法中加入MOD_INC_USE_COUNT，在close方法中加入MOD_DEC_USE_COUNT来实现使用计数.
+
+
+2.6 内核提供了更健壮、灵活的模块计数管理接口
+\starttyping
+try_module_get(&module),
+module_put(&module)
+\stoptyping
+
+取代2.4中的模块使用计数管理宏。模块的使用计数不必由自身管理.
+而且在管理模块使用计数时考虑到SMP与PREEMPT机制的影响（参考module.h中try_module_get和module.c中module_put的实现）。
+
+\starttyping
+int try_module_get(struct module *module); 用于增加模块使用计数；若返回为0，表示调用失败，希望使用的模块没有被加载或正在被卸载中。
+void module_put(struct module *module); 减少模块使用计数。
+\stoptyping
+
+
+
+try_module_get与module_put 的引入与使用与2.6内核下的设备模型密切相关。2.6内核为不同类型的设备定义了struct module *owner 域，用来指向管理此设备的模块。如字符设备的定义：
+\starttyping
+struct cdev
+    {
+        struct kobject kobj;
+        struct module *owner;
+        struct file_operations *ops;
+        struct list_head list;
+        dev_t dev;
+        unsigned int count;
+    };
+    struct file_operations {
+        struct module *owner;
+        loff_t (*llseek) (struct file *, loff_t, int);
+        ssize_t (*read) (struct file *, char __user *, size_t, loff_t *);
+        ssize_t (*write) (struct file *, const char __user *, size_t, loff_t *);
+        ....
+    };
+\stoptyping
+
+
+从设备使用的角度出发，当需要打开、开始使用某个设备时，使用 try_module_get(dev->owner)去增加管理此设备的 owner模块的使用计数；
+当关闭、不再使用此设备时，使用module_put(dev->owner)减少对管理此设备的owner模块的使用计数。
+这样，当设备在使用时，管理此设备的模块就不能被卸载；只有设备不再使用时模块才能被卸载。
+
+2.6内核下，对于为具体设备写驱动的开发人员而言，基本无需使用 try_module_get与module_put，
+因为此时开发人员所写的驱动通常为支持某具体设备的owner模块，对此设备owner模块的计数管理由内核里更底层的代码如总线驱动或是此类设备共用的核心模块来实现，
+从而简化了设备驱动开发。
+
+
+最近, 发现在使用一个叫 siad 的 tcp 拥塞控制模块的时候, 出现了问题. 当 remod 这个模块的之后, 一些机器当掉了.
+后来发现, 是在一些服务关闭的时候, 出现这个问题. 从输出的错误来看, 是在 tcp_close 的时候, 调用 tcp_cleanup_congestion_control 的时候出现了
+page_fault.
+
+再研究代码, 可以看到这个模块没有设置 owner 这个变量. 所以这个模块的引用计数是不正确的. 成功地 rmmod 了, 但是在 tcp_cleanup_congestion_control 中
+再次引用这个模块的时候, 实际的代码段已经不存了. 这个时间的行为是不可预知的.
+
+\goto{http://blog.sina.com.cn/s/blog_68edf5b00100uk0z.html}

@@ -1,0 +1,238 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Title: ATS - Store Span CacheDisk 源码分析
+%Class: ats
+%Post:1
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+Store 对应于 storage.conf 配置文件, 完成对于文件的解析.
+storage.conf 里配置有多个存储对象. 每一个存储对象对应于一个 Span 类的一个实例.
+(注意 Span 类还用于 hostdb. )
+而 CacheDisk 与 Span 都是对应于磁盘, Span 更加接近于对于磁盘的信息的提取,
+而 CacheDisk 是对于磁盘的应用的管理.
+
+这里的分析是我在研究上一篇文件提到的 bug 的时候进行分析的 ATS 代码, 记录在这里.
+主要的目的是搞清楚 ATS 对于磁盘空间的利用是什么样子的.
+
+在 Store 里的 read_config 里会调用 Span 的 init 函数.
+\starttyping
+const char *
+Span::init(char *filename, int64_t size)
+{
+  int devnum = 0, fd, arg = 0;
+  int ret = 0, is_disk = 0;
+  u_int64_t heads, sectors, cylinders, adjusted_sec;
+
+  /* Fetch file type */
+  struct stat stat_buf;
+  Debug("cache_init", "Span::init(\"%s\",%" PRId64 ")", filename, size);
+  if ((ret = stat(filename, &stat_buf)) < 0) {
+    Warning("unable to stat '%s': %d %d, %s", filename, ret, errno, strerror(errno));
+    return "cannot stat file";
+  }
+  switch (stat_buf.st_mode & S_IFMT) {
+  case S_IFBLK:
+  case S_IFCHR:
+    devnum = stat_buf.st_rdev;
+    Debug("cache_init", "Span::init - %s - devnum = %d",
+          ((stat_buf.st_mode & S_IFMT) == S_IFBLK) ? "S_IFBLK" : "S_IFCHR", devnum);
+    break;
+  case S_IFDIR:
+    devnum = stat_buf.st_dev;
+    file_pathname = 0;
+    Debug("cache_init", "Span::init - S_IFDIR - devnum = %d", devnum);
+    break;
+  case S_IFREG:
+    devnum = stat_buf.st_dev;
+    file_pathname = 1;
+    size = stat_buf.st_size;
+    Debug("cache_init", "Span::init - S_IFREG - devnum = %d", devnum);
+    break;
+  default:
+    break;
+  }
+
+  if ((fd = socketManager.open(filename, O_RDONLY)) < 0) {
+    Warning("unable to open '%s': %d, %s", filename, fd, strerror(errno));
+    return "unable to open";
+  }
+  Debug("cache_init", "Span::init - socketManager.open(\"%s\", O_RDONLY) = %d", filename, fd);
+
+  adjusted_sec = 1;
+#ifdef BLKPBSZGET
+  if (ioctl(fd, BLKPBSZGET, &arg) == 0)
+#else
+  if (ioctl(fd, BLKSSZGET, &arg) == 0)
+#endif
+  {
+    hw_sector_size = arg; // 得到磁盘的扇区的大小, BLKPBSZGET 是物理扇区, BLKSSZGET 是逻辑扇区
+    is_disk = 1;
+    adjusted_sec = hw_sector_size / 512;
+    Debug("cache_init", "Span::init - %s hw_sector_size=%d is_disk=%d adjusted_sec=%" PRId64,
+          filename, hw_sector_size, is_disk, adjusted_sec);
+  }
+
+  alignment = 0; // 不清楚这个是做什么  TODO ?
+#ifdef BLKALIGNOFF
+  if (ioctl(fd, BLKALIGNOFF, &arg) == 0) {
+    alignment = arg;
+    Debug("cache_init", "Span::init - %s alignment = %d", filename, alignment);
+  }
+#endif
+
+  if (is_disk) {
+    u_int32_t ioctl_sectors = 0;
+    u_int64_t ioctl_bytes = 0;
+    u_int64_t physsectors = 0;
+
+    /* Disks cannot be mmapped */
+    is_mmapable_internal = false;
+
+    if (!ioctl(fd, BLKGETSIZE64, &ioctl_bytes)) {
+      heads = 1;
+      cylinders = 1;
+      physsectors = ioctl_bytes / hw_sector_size;
+      sectors = physsectors;
+    } else if (!ioctl(fd, BLKGETSIZE, &ioctl_sectors)) {
+      heads = 1;
+      cylinders = 1;
+      physsectors = ioctl_sectors;
+      sectors = physsectors / adjusted_sec;
+    } else {
+      struct hd_geometry geometry;
+      if (!ioctl(fd, HDIO_GETGEO, &geometry)) {
+        heads = geometry.heads;
+        sectors = geometry.sectors;
+        cylinders = geometry.cylinders;
+        cylinders /= adjusted_sec;      /* do not round up */
+      } else {
+        /* Almost certainly something other than a disk device. */
+        Warning("unable to get geometry '%s': %d %s", filename, errno, strerror(errno));
+        return ("unable to get geometry");
+      }
+    }
+
+    blocks = heads * sectors * cylinders; // 得到 blocks
+
+    if (size > 0 && blocks * hw_sector_size != size) { // 磁盘重新记录 size
+      Warning("Warning: you specified a size of %" PRId64 " for %s,\n", size, filename);
+      Warning("but the device size is %" PRId64 ". Using minimum of the two.\n", (int64_t)blocks * (int64_t)hw_sector_size);
+      if ((int64_t)blocks * (int64_t)hw_sector_size < size)
+        size = (int64_t)blocks * (int64_t)hw_sector_size;
+    } else {
+      size = (int64_t)blocks * (int64_t)hw_sector_size;
+    }
+
+    /* I don't know why I'm redefining blocks to be something that is quite
+     * possibly something other than the actual number of blocks, but the
+     * code for other arches seems to.  Revisit this, perhaps. */
+    // igalic: No. See TS-1707
+    blocks = size / STORE_BLOCK_SIZE; // 可以看到注释, 作者自己说不清楚为什么这么写, ^_^
+
+    Debug("cache_init", "Span::init physical sectors %" PRId64 " total size %" PRId64 " geometry size %" PRId64 " store blocks %" PRId64 "",
+          physsectors, hw_sector_size * physsectors, size, blocks);
+
+    pathname = ats_strdup(filename);
+    file_pathname = 1;
+  } else {
+    Debug("cache_init", "Span::init - is_disk = %d, raw device = %s", is_disk, (major(devnum) == 162) ? "yes" : "no");
+    if (major(devnum) == 162) { // 设备号
+      /* Oh, a raw device, how cute. */
+
+      if (minor(devnum) == 0)
+        return "The raw device control file (usually /dev/raw; major 162, minor 0) is not a valid cache location.\n";
+
+      is_disk = 1;
+      is_mmapable_internal = false;     /* I -think- */
+      file_pathname = 1;
+      pathname = ats_strdup(filename);
+      isRaw = 1;
+
+      if (size <= 0)
+        return "When using raw devices for cache storage, you must specify a size\n";
+    } else {
+      /* Files can be mmapped */
+      is_mmapable_internal = true;
+
+      /* The code for other arches seems to want to dereference symlinks, but I
+       * don't particularly understand that behaviour, so I'll just ignore it.
+       * :) */
+
+      pathname = ats_strdup(filename);
+      if (!file_pathname)
+        if (size <= 0)
+          return "When using directories for cache storage, you must specify a size\n";
+      Debug("cache_init", "Span::init - mapped file \"%s\", %" PRId64 "", pathname, size);
+    }
+    blocks = size / STORE_BLOCK_SIZE;
+  }
+
+  disk_id = devnum;
+
+  socketManager.close(fd);
+
+  return NULL;
+}
+\stoptyping
+
+而在 Cache.cc 里会调用 CacheDisk 的方法打开磁盘, 设置 magic number.
+CacheProcessor::start_internal(int flags) 函数中:
+\starttyping
+
+        off_t skip = ROUND_TO_STORE_BLOCK((sd->offset < START_POS ? START_POS + sd->alignment : sd->offset));
+        blocks = blocks - (skip >> STORE_BLOCK_SHIFT);
+#if AIO_MODE == AIO_MODE_NATIVE
+        eventProcessor.schedule_imm(NEW(new DiskInit(gdisks[gndisks], path, blocks, skip, sector_size, fd, clear)));
+#else
+        gdisks[gndisks]->open(path, blocks, skip, sector_size, fd, clear);
+#endif
+        gndisks++;
+\stoptyping
+gdisks 就是 CacheDisk 的实例数组.
+
+skip 是在存储对象中的偏移数, 这个不会小于 START_POS(8k), 但是 sd->offset 这是 sd 是Span 的实例, 这个 offset 好像只有
+对于 hostdb 才有用, 正常情况下是0, 而 sd-> alignment 一般也是 0.
+
+blocks 以 8k 为单位磁盘的块数, 但是用减速 skip 的, 所以实际上也就是可用的磁盘的空间的块数.
+
+open 函数很简单就是使用 aio 打开磁盘信息, 打开之后的回调是这个函数:
+\starttyping
+int
+CacheDisk::openStart(int event, void * /* data ATS_UNUSED */)
+{
+  ink_assert(event == AIO_EVENT_DONE);
+
+  if ((size_t) io.aiocb.aio_nbytes != (size_t) io.aio_result) {
+    Warning("could not read disk header for disk %s: declaring disk bad", path);
+    SET_DISK_BAD(this);
+    SET_HANDLER(&CacheDisk::openDone);
+    return openDone(EVENT_IMMEDIATE, 0);
+  }
+
+    // 这里比较 magic number 值 0xABCE1237 和 blocks
+  if (header->magic != DISK_HEADER_MAGIC || header->num_blocks != (uint64_t)len) {
+    Warning("disk header different for disk %s: clearing the disk", path);
+    SET_HANDLER(&CacheDisk::clearDone);
+    clearDisk(); // 清空磁盘
+    return EVENT_DONE;
+  }
+
+  cleared = 0;
+  /* populate disk_vols */
+  update_header();
+
+  SET_HANDLER(&CacheDisk::openDone);
+  return openDone(EVENT_IMMEDIATE, 0);
+}
+\stoptyping
+而实际上 CacheDisk.cc 都是围绕着 head 信息进行的一些处理函数.
+
+而在 aggWrite 中对于 end 的计算里会加上EVACUATION_SIZE, 这个的值是 8M, 也就是存储空间的最后 8M 是不会用到的.
+\starttyping
+  // evacuate space
+  off_t end = header->write_pos + agg_buf_pos + EVACUATION_SIZE;
+  if (evac_range(header->write_pos, end, !header->phase) < 0)
+    goto Lwait;
+  if (end > skip + len)
+    if (evac_range(start, start + (end - (skip + len)), header->phase) < 0)
+      goto Lwait;
+\stoptyping

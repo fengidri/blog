@@ -1,0 +1,210 @@
+<p></p>
+
+<h3>目的</h3>
+<p>Early Retransmit机制解决了dupack较少，无法触发快速重传的问题。
+但是如果发生了尾丢包，由于尾包后面没有更多的数据包，也就没有办法触发任何的dupack。</p>
+
+<p>具体的场景:
+<pre>
+a. Drop tail at the end of transactions.
+b. Mid-transaction loss of an entire window of data or ACKs.
+c. Insufficient number of duplicate ACKs to trigger fast recovery at sender.
+    -- 基本被Eearly Retransmit机制解决了
+d. An unexpectedly long round-trip time(RTT), such that the ACKs arrive after
+   the RTO timer expires.
+    -- F-RTO机制通过检测spurious retransmission，能够尽量的undo RTO造成的影响
+</pre>
+</p>
+
+<h3>算法</h3>
+<p><pre>
+FlightSize: the amount of data that has been sent but not yet *cumulatively* acknowledged.
+    -- 这个与内核中的packet_in_flight计数器要区分开，这里要强调累计确认
+
+PTO: Probe timeout is a timer event indicating that an ACK is overdue.
+
+Open state: the sender has so far received in-sequence ACKs with no SACK
+            blocks, and no other indications (such as retransmission timeout) that
+            a loss may have occurred.
+    -- 换成中文：TCP的正常状态，哈哈
+
+Consecutive PTOs: back-to-back PTOs all scheduled for the same tail packets in a flight.
+</pre>
+</p>
+
+<p><pre>
+1. 在Open state发送新数据后，设置一个PTO计时器
+    if (FlightSize &gt; 1)     PTO = max(2*SRTT, 10ms)
+    if (FlightSize == 0)    PTO = max(2*SRTT, 1.5*SRTT + WCDelAckT)
+    if (RTO is earlier)     PTO = min(RTO, PTO)
+        其中WCDelAckT表示worst case delayed ACK timer，默认值是200ms
+
+2. 启用PTO timer的条件：
+    a. connection is in open state
+        -- 如果不在open state，说明有其他信息帮助判断丢包。而无需启用TLP
+    b. connection is either cwnd limited or application limited
+        -- TLP必须满足tail这个条件
+    c. number of consecutive PTOs &lt;= 2
+        -- TLP 不要尝试太多次
+    d. connection is SACK enable
+        -- TLP依赖于SACK选项来提供是否触发FR的决策
+
+3. 当PTO超时后：
+    if (能发新数据)         发送一个新数据包，FlightSize += SMSS, cwnd不改变
+    if (没有新数据可发)     发送一个序号最大的数据包
+    增加loss probe的计数器
+    如果步骤2中的条件满足，则再次设置PTO；否则设置RTO超时计时器'now+RTO'
+
+4. 在处理收到的ACK包时
+    取消PTO timer
+    如果步骤2条件满足，则设置PTO timer
+</pre>
+</p>
+
+<p>算法步骤:
+<pre>
+1. 初始化
+    当TCP流进入ESTABLISHED状态，或者RTO超时后，或者进入Fast Recovery后，对上面两个变量进行初始化
+    TLPRtxOut = 0;
+    TLPHighRxt = 0;
+2. 当发送一个TLP探测包后
+    if (TLPRtxOut == 0)
+        TLPHighRxt = SND.NXT
+    TLPRtxOut++;
+3. 在收到一个ACK包后
+    当满足所有以下条件时，认为这个ACK是由TLP包触发的，而且这个TLP是完全多余的
+    a. TLPRtxOut &gt; 0                        /* 首先当然得发送过TLP包 */
+    b. SEG.ACK == TLPHighRxt                /* ACK包确认了SND.NXT序号 */
+    c. ACK不包含序号超过TLPHighRxt的SACK段  /* 意味着这个ACK就是TLP包序号触发的，而不是TLPHighRxt序号之后某个包触发的 */
+    d. ACK没有移动SND.UNA                   /* 说明这是一个纯粹的dupack，并且ACK号是SND.NXT证明这个ACK包对应的TLP是完全多余的 */
+    e. ACK包不含数据                        /* 就是要证明这个ACK是一个完全多余的TLP包触发的 */
+    f. ACK包不是一个窗口更新包              /* 理由同e */
+    以上条件都满足时，TLPRtxOut--
+
+    如果ACK.SEQ &gt; TLPHighRxt，则说明TLP阶段应该结束了。最后来判断是否发现了丢包
+    isLoss = (TLPRtxOut &gt; 0) &amp;&amp;     /* 不为0说明有一个TLP包不是多余的，也就是说有丢包发生 */
+             (ACK不携带任何TLP重传相关的DSACK信息)      /* 如果包含DSACK信息，也能证明TLP是多余的。所以要排除这种情况 */
+    TLPRtxOut = 0
+    if (isLoss)
+        EnterRecovery()
+4. TLP探测包的发送条件，除了满足TLP原始算法中步骤2中的条件外，还要满足
+    (TLPRxtOut == 0) || (SND.NXT == TLPHighRxt)
+    -- The sender maintains this invariant so that there is at most
+       one TLP retransmission "espisode" happening at a time.
+</pre>
+</p>
+
+<h3>源码分析</h3>
+<p>调用逻辑:
+<pre>
+1. 正常数据的发送流程中，增加调度安装PTO超时计时器的逻辑
+   即TLP算法逻辑的第一步。
+
+__tcp_push_pending_frame()
+    ==&gt; tcp_write_xmit() with push_one=0
+        ==&gt; tcp_schedule_loss_probe()   /* 尝试安装PTO超时计时器的安装 */
+
+2. 处理ack时，增加调度安装PTO超时计时器和结束TLP状态的逻辑
+   即TLP算法的最后一步
+
+tcp_ack()
+    ==&gt; if (tp-&gt;tlp_high_seq) tcp_process_tlp_ack();    /* 判断是否需要结束TLP状态 */
+    ==&gt; tcp_schedule_loss_probe()
+</pre>
+</p>
+
+<p><pre>
+/* 返回false代表未设置timer, 返回true代表设置了PTO timer */
+bool tcp_schedule_loss_probe(struct sock *sk)
+{
+    ...
+    u32 rtt = tp-&gt;srtt &gt;&gt; 3;    /* tp-&gt;srtt存的实际是RFC中SRTT的8倍 */
+    ...
+    /* TLP is only scheduled when next timer event is RTO. */
+    if (icsk-&gt;icsk_pending != ICSK_TIME_RETRANS)
+        return false;
+
+    /* Schedule a loss probe in 2*RTT for SACK capable connections
+     * in Open state, that are either limited by cwnd or application.
+     */
+    if (sysctl_tcp_early_retrans &lt; 3 ||     /* 没开TLP */
+        !rtt ||                             /* 没有RTTsample可用，没法设置PTO */
+        !tp-&gt;packets_out ||                 /* 网络中没有未被确认的数据包，没必要设置PTO */
+        !tcp_is_sack(tp) ||                 /* 不支持SACK选项 */
+        !inet_csk(sk)-&gt;icsk_ca_state != TCP_CA_Open)    /* 只有在open状态才设置PTO */
+        return false;
+
+    /* Probe timeout is at lease 1.5*rtt + TCP_DELACK_MAX to account
+     * for delayed ack when there's one outstanding packet.
+     */
+    /* 这段代码完全符合TLP算法逻辑，不解释了 */
+    timeout = rtt &lt;&lt; 1;
+    if (tp-&gt;packets_out == 1)
+        timeout = max_t(u32, timeout, (rtt + (rtt &gt;&gt; 1) + TCP_DELACK_MAX));
+    timeout = max_t(u32, timeout, msecs_to_jiffies(10));
+
+    /* If RTO is shorter, just schedule TLP in its place. */
+    /* PTO = min(PTO, RTO) */
+    tlp_time_stamp = tcp_time_stamp + timeout;
+    rto_time_stamp = (u32)inet_csk(sk)-&gt;icsk_timeout;
+    if ((s32)(tlp_time_stamp - rto_time_stamp) &gt; 0) {
+        s32 delta = rto_time_stamp - tcp_time_stamp;
+        if (delta &gt; 0)
+            timeout = delta;
+    }
+
+    inet_csk_reset_xmit_timer(sk, ICSK_TIME_LOSS_PROBE, timeout, TCP_RTO_MAX);
+    return true;
+}
+
+// 在tcp_write_timer_handler中会根据event的类型，来做相应的处理
+// 如果是PTO超时，则调用tcp_send_loss_probe(sk)来发送TLP探测包
+/* When probe timeout (PTO) fires, send a new segment if one exists, else
+ * retransmit the last segment.
+ */
+void tcp_send_loss_probe(struct sock *sk)
+{
+    ...
+    /*
+     * 如果有新数据可以发送，则发新数据作为探测包
+     * TLP用了一个push_one=2的trick来区分是正常的发送包，还是loss probe包
+     */
+    if (tcp_send_head(sk) != NULL) {
+        err = tcp_write_xmit(sk, mss, TCP_NAGLE_OFF, 2, GFP_ATOMIC);
+        goto rearm_timer;
+    }
+
+    /* At most one outstanding TLP retransmission */
+    if (tp-&gt;tlp_high_seq)
+        goto rearm_timer;
+
+    /* Retransmit last segment */
+    skb = tcp_write_queue_tail(sk);
+    if (WARN_ON(!skb))
+        goto rearm_timer;
+
+    /* 省略一些判断tcp fragment的代码 */
+
+    /* Probe with zero data doesn't trigger fast recovery */
+    if (skb-&gt;len &gt; 0)
+        err = __tcp_retransmit_skb(sk, skb);
+
+    /* Record snd_nxt for loss detection */
+    if (!likely(!err))
+        tp-&gt;tlp_high_seq = tp-&gt;snd_nxt;
+
+rearm_timer:
+    /* 重新安装RTO超时计时器 */
+    inet_csk_reset_xmit_timer(sk, ICSK_TIME_RETRANS, inet_csk(sk)-&gt;icsk_rto, TCP_RTO_MAX);
+
+    if (likely(!err))   /* 增加计数器的值，可以在/proc/net/snmp中看到，netstat -s也可以 */
+        NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPLOSSPROBES);
+
+    return;
+}
+</pre>
+</p>
+
+<h3>参考</h3>
+<p>原文在这里, 本文一定程度上是对于此文的学习记录.
+&nbsp;<a href=http://perthcharles.github.io/2015/10/31/wiki-network-tcp-tlp/ >http://perthcharles.github.io/2015/10/31/wiki-network-tcp-tlp/</a>&nbsp;</p>

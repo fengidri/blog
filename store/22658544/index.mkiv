@@ -1,0 +1,43 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Title: git - gitattributes
+%Class: git
+%Post:1
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\def\ga{gitattributes}
+通过 \ga 功能可以对于特定的子目录或文件集运用一些特别的设置项.
+
+参考: \goto{这里}{https://git-scm.com/book/zh/v1/\%E8\%87\%AA\%E5\%AE\%9A\%E4\%B9\%89-Git-Git\%E5\%B1\%9E\%E6\%80\%A7}
+
+这个是\goto{英文}{https://git-scm.com/book/en/v2/Customizing-Git-Git-Attributes}
+的, 应该看这个, 更好一些, 中文中一些关键的东西, 没有翻译, 让人头疼.
+
+
+这里主要说明 merge 功能的运用. 比如你从主分支 A fork 一个分支B, 要修改一些配置性的文件.
+比如数据库的设置database.xml. 当然还有一些代码的开发. 当你完成了开发之后, 想发起一个 pull request.
+这个时候问题来了, 其它的代码当然没有问题但是database.xml 你不能合并回去啊. 主分支当然还是
+要用原来的啊.
+
+这个时候你可以设置 database.xml 文件在合并比较的时候的方式, 在 A merge B 的时候 database.xml
+总是使用 A 自己的. 这个时候在 B 分支里做如下的设置:
+在项目的根目录下增加.\ga 文件. 内容如下:
+\starttyping
+database.xml merge=ours
+\stoptyping
+
+而ours 的处理方式要自己增加:
+\starttyping
+$ git config --global merge.ours.driver true
+\stoptyping
+不知道为什么, 中文翻译里把这个删掉了.
+
+这样, 当A merge B 的时候就会还使用自己的 database.xml.
+
+与之相关, 如果你查看自己的设置正确没有, 可以使用如下命令查看文件 attr 有没有设置正确:
+\starttyping
+git check-attr -a database.xml
+\stoptyping
+
+这里还有一个问题, 就是当分支 B 再被 别人 checkout 出来的时候,
+.\ga 文件会存在, 但是关于 ours 的设置在.git/config 里可能会没有.
+
+

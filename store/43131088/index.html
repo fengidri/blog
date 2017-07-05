@@ -1,0 +1,183 @@
+<p></p>
+
+<h3>前言</h3>
+<p>本文主要说明, 详细的磁盘参数对于性能的影响. 重点研究 bs 与 iops 的合理大小.</p>
+
+<h3>参数</h3>
+<p>
+    <ul>
+
+        <li>IPOS: 每秒执行的 IO 操作数量
+
+        <li>BS: 每次 IO 请求的数据大小.
+
+        <li>Throughput: 吞吐量
+    </ul></p>
+
+<h4>IOPS BS Throughput 关系</h4>
+<p><pre>
+Throughput ~= IOPS * BS
+</pre>
+</p>
+
+<p>在 BS 过小的时候, 这个公式的误差越大. 因为这个时间 IOSP 是瓶颈.
+当 BS 增大的时间, Throughput 一般会成为瓶颈,
+这个时间 Throughput 是一个变化不大的值, 所以 IOPS 与 BS 近似成反函数关系.</p>
+
+<p><img src=http://cdn.fengidri.me/blog/bs_iops_put.png >
+考虑我们的业务场景, 我们关心的是响应时间与平均吐出量.</p>
+
+<p>所以谓平均吐出量, 是我们要求对于每一个IO 的吐出量, 而不是总的吐出量.
+我们希望每一个 IO 都是公平的.</p>
+
+<h4>IOPS 的意义</h4>
+<p>对于 CDN 网络, 命中率是根本. 不考虑内存缓存的情况下, 可以认为, 整个 CDN 网络实际上是由
+磁盘进行驱动的.</p>
+
+<p>IOPS 表示, 磁盘1s 可以执行的请求的数量. 换言之, 就是我们的服务可以处理的请求数.
+如果所有的用户的数据都 1M 以上的, 那么不考虑 RAM, 我们的服务器的并发能力只有 500 左右.</p>
+
+<h4>BS 的意义</h4>
+<p>BS 是一次 IO 请求的大小.</p>
+
+<p>考虑一种情况, 当用户提前中断了请求, 但是 IO 请求已经发送, 那么这一次的 IO 操作就是白费的, 因为不会
+产生网络流量. 所以当 BS 越大, 这个浪费就越大.</p>
+
+<p>另一个问题是阻塞, 当请求一段比较大的数据的时候, 磁盘只能专心处理这一个请求. SSD 有并行的能力, 但是这个
+能力是限的. 我们的服务, 不应该一下子, 阻塞在一段数据上, 而可以把处理的时间分片给不同的请求, 从而保证每一个 IO 的公平行.</p>
+
+<h3>理论模型</h3>
+<p></p>
+
+<h4>有效性</h4>
+<p>对于我们的业务而言, 有效的数据并不是从磁盘里读取的数据, 而是通过网络发送出去的数据.
+只有当数据发送给了用户, 我们这一次的开销才是有价值的.</p>
+
+<p>而实际上, 有很多时间, 我们完成了 IO 操作, 但是用户可能中断了, 网络请求. 这个时候我们的
+IO 操作就变得没有意义了. 我们一次性请求的数据越大浪费也就越大.</p>
+
+<h4>公平性</h4>
+<p>对于所有的并发性的请求, 完全做到公平是不可能的, 虽然 SSD 可以并发处理, 但是并发有限.
+对于磁盘来说, 所有的请求都是排队的, 想完全
+公平地处理所有的请求, 是不可能的. 只能减小在一个请求上的阻塞的时间. 加快请求队列的处理速度.</p>
+
+<p>在实际的请求中, 请求的大小是不相同的. 如果请求 1M 数据, 等待 1s, 处理完成是 1m/s.
+但是如果 100k 的数据等待 1s, 处理完成的时间速度是 100k/s.
+所以大的 IO 请求的存在, 会很大程序上影响其它的请求的响应.</p>
+
+<h4>速度</h4>
+<p>一个完整的文件请求的所花费的时间包括:</p>
+
+<p>
+    <ul>
+
+        <li>等待时间(w1)
+
+        <li>处理时间(w2)
+
+        <li>间隔时间(w3)
+    </ul></p>
+
+<p>如果, 只要一次 IO 就可以完成, 那么时间开销只有(w1+w2).
+w2 的开销, 理论上是固定的. 等于 Size/DSpeed.</p>
+
+<p>当要多次才能完成一个完整的文件请求的时候, 间隔时间就
+非常重要的. 这个时间与并发量有关. 当并发很高的情况下,
+间隔时间就会很长. 从而降底速度.</p>
+
+<h3>http</h3>
+<p>对于 http 的性能的影响, 从以下几个方面进行分析:
+
+    <ul>
+
+        <li>首包时间
+
+        <li>总下载时间
+
+        <li>body 的间隔时间
+    </ul></p>
+
+<p>以下进行测试, 设置 ATS 的不同最大分段大小,并发 2000 个请求, 总共 2000 个请求.
+测试文件大小 1M.</p>
+
+<h4>磁盘 smartctl 参数</h4>
+<p><pre>
+smartctl 5.43 2012-06-30 r3573 [x86_64-linux-2.6.32-431.11.2.el6.x86_64] (local build)
+Copyright (C) 2002-12 by Bruce Allen, http://smartmontools.sourceforge.net
+
+=== START OF READ SMART DATA SECTION ===
+SMART Attributes Data Structure revision number: 10
+Vendor Specific SMART Attributes with Thresholds:
+ID# ATTRIBUTE_NAME          FLAG     VALUE WORST THRESH TYPE      UPDATED  WHEN_FAILED RAW_VALUE
+  5 Reallocated_Sector_Ct   0x0032   100   100   000    Old_age   Always       -       0
+  9 Power_On_Hours_and_Msec 0x0032   000   000   000    Old_age   Always       -       920590h+20m+51.570s
+ 12 Power_Cycle_Count       0x0032   100   100   000    Old_age   Always       -       12
+170 Available_Reservd_Space 0x0033   100   100   010    Pre-fail  Always       -       0
+171 Program_Fail_Count      0x0032   100   100   000    Old_age   Always       -       0
+172 Erase_Fail_Count        0x0032   100   100   000    Old_age   Always       -       0
+174 Unexpect_Power_Loss_Ct  0x0032   100   100   000    Old_age   Always       -       11
+184 End-to-End_Error        0x0033   100   100   090    Pre-fail  Always       -       0
+187 Uncorrectable_Error_Cnt 0x000f   116   116   050    Pre-fail  Always       -       122184134
+192 Power-Off_Retract_Count 0x0032   100   100   000    Old_age   Always       -       11
+225 Host_Writes_32MiB       0x0032   100   100   000    Old_age   Always       -       886296
+226 Workld_Media_Wear_Indic 0x0032   100   100   000    Old_age   Always       -       65535
+227 Workld_Host_Reads_Perc  0x0032   100   100   000    Old_age   Always       -       6
+228 Workload_Minutes        0x0032   100   100   000    Old_age   Always       -       65535
+232 Available_Reservd_Space 0x0033   100   100   010    Pre-fail  Always       -       0
+233 Media_Wearout_Indicator 0x0032   100   100   000    Old_age   Always       -       0
+241 Host_Writes_32MiB       0x0032   100   100   000    Old_age   Always       -       886296
+242 Host_Reads_32MiB        0x0032   100   100   000    Old_age   Always       -       65471
+249 NAND_Writes_1GiB        0x0013   100   100   000    Pre-fail  Always       -       9093
+
+
+=== START OF INFORMATION SECTION ===
+Model Family:     Intel 520 Series SSDs
+Device Model:     INTEL SSDSC2CW120A3
+Serial Number:    CVCV251203B0120BGN
+LU WWN Device Id: 5 001517 803d3fdc5
+Firmware Version: 400i
+User Capacity:    120,034,123,776 bytes [120 GB]
+Sector Size:      512 bytes logical/physical
+Device is:        In smartctl database [for details use: -P show]
+ATA Version is:   8
+ATA Standard is:  ACS-2 revision 3
+Local Time is:    Tue Mar 29 18:52:19 2016 CST
+SMART support is: Available - device has SMART capability.
+SMART support is: Enabled
+
+</pre>
+</p>
+
+<h4>首包时间</h4>
+<p><img src=http://cdn.fengidri.me/blog/ats_first_byte_time.png >图中显示的是, 各个 BS 下对应的文件磁盘命中的情况下的, 客户端收到的首包时间.
+文件比较大的时候, 表现比较差, 这个符合我们的预期. 128k 以下的各个BS测试的时间比较相近,
+64k 的表现更好一些.</p>
+
+<h4>下载总时间</h4>
+<p><img src=http://cdn.fengidri.me/blog/ats_total_time.png >图中显示的是, 各个 BS 下对应的文件磁盘命中的情况下的, 客户端下载整个文件所用的时间.
+1m bs 表现最差, 这一点意外. 64k 同样也是表现最好的. 用时最少.</p>
+
+<h4>最大间隔时间</h4>
+<p><img src=http://cdn.fengidri.me/blog/ats_max_read_time.png >图中显示的是, 各个 BS 下对应的文件磁盘命中的情况下的, 客户端过程中两次 read socket 的最大间隔时间.
+同样是 64k 表现最好, 这一点是完全意外的.</p>
+
+<h3>proxy.config.cache.target_fragment_size</h3>
+<p></p>
+
+<h4>介绍</h4>
+<p>这个参数用于设定 ATS 保存数据的分片大小. 一个文件的大小如果大于这个值, 文件在保存到磁盘的时候,
+会分成多个 fragment, 每一个 fragment 的大小由这个参数进行控制. 当然, 如果文件小于这值, 在保存的时候 fragment
+自然会缩小.</p>
+
+<h4>影响</h4>
+<p>这个参数的调整, 对于已有的缓存没有影响. 只对于新的缓存会有影响. 并且可以在运行中进行调整.</p>
+
+<h4>注意</h4>
+<p>这个 fragment 是针对于磁盘的分片的, 这里面还要包含有 HTTP 头.</p>
+
+<h3>大文件方案</h3>
+<p>大文件方案也有必要参考这个值, 但是不能直接使用, 而是要减去 HTTP 头的大小作为大文件的 slice.</p>
+
+<h3>后续</h3>
+<p>目前只测试了 2000 并发这一情况. 还有一些情况没有测试到. 但是总的方向: 降底 BS 是一定的.
+还有一些没有研究的方向, 还要后续进行研究. 如: 磁盘 SSD</p>

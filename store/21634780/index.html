@@ -1,0 +1,21 @@
+<p>
+拥塞控制选项使您可以配置Traffic Server的停止转发HTTP请求到原站，
+当他们变得拥挤。
+Traffic Server 会给用户一个信息以一段时间后重试:
+配置项:
+<pre>
+CONFIG proxy.config.http.congestion_control.enabled INT 1
+</pre>
+
+可以在<b>congestion.config</b>中指定规则:
+
+    <ul>
+
+        <li>哪个源站要进行拥塞跟踪.
+
+        <li>用于判断源站拥塞的 timeout
+
+        <li>当源站拥塞的时候, 发送给用户的页面
+
+        <li>如何跟踪源站ip/hostname
+    </ul></p>

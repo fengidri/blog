@@ -1,0 +1,625 @@
+<p></p>
+
+<h3>kernel</h3>
+<p>
+    <ul>
+
+        <li>kernel.core_uses_pid = 1 # core 文件名是否添加 PID
+
+        <li>kernel.pid_max = 4194303 #* 系统最大pid值 默认:32768
+
+        <li>kernel.ctrl-alt-del = 1</p>
+
+<p>
+        <li>kernel.msgmnb = 65536 # 每个消息队列的最大字节限制
+
+        <li>kernel.msgmax = 65536 # 最大消息长度
+
+        <li>kernel.msgmni = 65536 #+ 最大消息队列数</p>
+
+<p>
+        <li>kernel.shmmni = 4096
+
+        <li>kernel.shmmax = 8589934592
+
+        <li>kernel.shmall = 8589934592</p>
+
+<p>
+        <li>kernel.sem=250 32000 100 128
+    </ul></p>
+
+<h3>TCP</h3>
+<p></p>
+
+<h4>TCP 容量</h4>
+<p>
+    <ul>
+
+        <li>net.core.wmem_max = 16777216
+
+        <li>net.core.wmem_default = 131072 #<16777216
+
+        <li>net.core.rmem_max = 16777216
+
+        <li>net.core.rmem_default = 131072 #<16777216
+    </ul></p>
+
+<p><b>单位:</b>字节.</p>
+
+<p>w 表示 write, r表示recv. 分别是tcp 在write 与recv 下的窗口大小的最大值
+与默认值.</p>
+
+<p>在 HTTP 的情况下, 接收窗口没有必要太多, 因为一般情况下, 用户的请求数据
+都不大, 大的 POST 请求也不会过大. 而 CDN 主要用于提供资源下载, 下载的数据
+一般都大于请求的数据.</p>
+
+<p>所以默认情况下的 write 窗口的大小应该大一些, 接口窗口的默认要小一些.</p>
+
+<p>
+    <ul>
+
+        <li>net.ipv4.tcp_mem = 786432 1048576 1572864</p>
+
+<p> tcp_mem 表示了内存如何使用. 三个值分别表示如下:
+ 
+    <ul>
+
+        <li>内存使用下限
+ 
+        <li>内存压力模式开始对缓冲区使用应用压力的上限
+ 
+        <li>内存使用的上限。在这个层次上可以将报文丢弃，从而减少对内存的使用。对于较大的BDP可以增大这些值
+
+    </ul></p>
+
+<p>
+        <li>net.ipv4.tcp_wmem = 4096 16384 4194304</p>
+
+<p> tcp_rmem 表示自动调优定义socket使用的内存。
+ 
+    <ul>
+
+        <li>为socket接收缓冲区分配的最少字节数；
+ 
+        <li>默认值（该值会被rmem_default覆盖），缓冲区在系统负载不重的情况下可以增长到这个值；
+ 
+        <li>接收缓冲区空间的最大字节数（该值会被rmem_max覆盖）。
+
+    </ul></p>
+
+<p>
+        <li>net.ipv4.tcp_rmem = 4096 16384 4194304</p>
+
+<p> tcp_wmem 为自动调优定义socket使用的内存。
+ 
+    <ul>
+
+        <li>为socket发送缓冲区分配的最少字节数
+ 
+        <li>默认值（该值会被wmem_default覆盖）,缓冲区在系统负载不重的情况下可以增长到这个值
+ 
+        <li>发送缓冲区空间的最大字节数（该值会被wmem_max覆盖）
+
+    </ul>
+    </ul></p>
+
+<p><b>单位:</b>页</p>
+
+<h4>TCP KeepAlive</h4>
+<p>
+    <ul>
+
+        <li>net.ipv4.tcp_keepalive_time = 30 # TCP 发出第一个 keepalive 信息之前等待的时间
+
+        <li>net.ipv4.tcp_keepalive_intvl = 10 # keepalive 的时间间隔，默认是
+
+        <li>net.ipv4.tcp_keepalive_probes = 3 # 在认定连接失效之前，发送多少个TCP的keepalive探测包。
+    </ul></p>
+
+<h4>TCP TIME-WAIT</h4>
+<p>
+    <ul>
+
+        <li>net.ipv4.tcp_tw_reuse = 1 #*</p>
+
+<p> 表示是否允许将处于TIME-WAIT状态的socket（TIME-WAIT的端口）用于新的TCP连接.</p>
+
+<p>
+        <li>net.ipv4.tcp_tw_recycle = 1 #*</p>
+
+<p> 能够更快地回收TIME-WAIT套接字。</p>
+
+<p>
+        <li>net.ipv4.tcp_max_tw_buckets = 10000</p>
+
+<p>表示系统同时保持TIME_WAIT套接字的最大数量，如果超过这个数字，
+TIME_WAIT套接字将立刻被清除并打印警告信息。
+默认为180000，改为 5000。
+
+        <li>net.ipv4.tcp_congestion_control = cubic
+    </ul></p>
+
+<h4>重试</h4>
+<p>
+    <ul>
+
+        <li>net.ipv4.tcp_retries1 = 3</p>
+
+<p> 在认定出错并向网络层提交错误报告之前，重试多少次。缺省设置为RFC规定的最小值：3，相当于3秒~8分钟（取决于RIO）。</p>
+
+<p>
+        <li>net.ipv4.tcp_retries2 = 5</p>
+
+<p> 在杀死一个活动的TCP连接之前重试多少次。RFC 1122规定这个限制应该长于100秒。这个值太小了。缺省值是15，相当于13~30分钟（取决于RIO）。</p>
+
+<p>
+        <li>net.ipv4.tcp_syn_retries = 1 # 源站的网络并不好, 是不是太小了</p>
+
+<p> 对于一个新建连接，内核要发送多少个 SYN 连接请求才决定放弃。
+ 不应该大于255，默认值是5，对应于180秒左右时间。
+ (对于大负载而物理通信良好的网络而言,这个值偏高,可修改为2.
+ 这个值仅仅是针对对外的连接,对进来的连接,是由tcp_retries1 决定的)</p>
+
+<p>
+        <li>net.ipv4.tcp_synack_retries = 1</p>
+
+<p>对于远端的连接请求SYN，内核会发送SYN ＋ ACK数据报，以确认收到上一个 SYN连接请求包。这是所谓的三次握手( threeway handshake)机制的第二个步骤。这里决定内核在放弃连接之前所送出的 SYN+ACK 数目。不应该大于255，默认值是5，对应于180秒左右时间。(可以根据上面的 tcp_syn_retries 来决定这个值)</p>
+
+<p>
+        <li>net.ipv4.tcp_orphan_retries</p>
+
+<p> 在近端丢弃TCP连接之前﹐要进行多少次重试。
+ 默认值是7个﹐相当于 50秒 - 16分钟﹐视 RTO 而定。
+ 如果您的系统是负载很大的web服务器﹐那么也许需要降低该值﹐
+ 这类 sockets 可能会耗费大量的资源。另外参的考 tcp_max_orphans 。
+ (事实上做NAT的时候,降低该值也是好处显著的,我本人的网络环境中降低该值为3)
+    </ul></p>
+
+<h4>TCP 扩展项</h4>
+<p>
+    <ul>
+
+        <li>net.ipv4.tcp_timestamps = 0
+    </ul></p>
+
+<p>用在其它一些东西中﹐可以防范那些伪造的 sequence 号码
+一条1G的宽带线路或许会重遇到带 out-of-line数值的旧sequence 号码(假如它是由于上次产生的)
+Timestamp 会让它知道这是个 '旧封包'
+(该文件表示是否启用以一种比超时重发更精确的方法（RFC 1323）来启用对 RTT 的计算；
+为了实现更好的性能应该启用这个选项
+)</p>
+
+<p>最好不要开启这两个功能, 这样做不合符协议, 可能会出现一些问题. 而这两个参数的优化
+对于性能的直接提升的意义也不大, 可能会对于安全有一些影响.</p>
+
+<p>基本的情况就是，你的客户或者你的服务器在一个 NAT 后面，如果开启这个参数，
+会导致服务器能收到三次握手的 SYN 但是不会返回任何的 SYN+ACK，
+其结果是客户无法访问你的网站。可以通过 tcpdump 或者下面的这个查看：</p>
+
+<p># netstat -s | grep timestamp</p>
+
+<p>tcp_timestamps 是 tcp 协议中的一个扩展项，通过时间戳的方式来检测过来的包以防止
+PAWS(Protect Against Wrapped Sequence numbers)，可以提高 tcp 的性能，
+2.6 的内核默认是打开的。只要 client/server/nat/loadbalancer
+不同时打开该选项就不会出现上面的问题。
+与之相关的包括 tcp_tw_recycle，如果 tcp_timestamps 和 tcp_tw_recycle 同时开启，
+就会开启时间戳选项，导致上面的问题。
+如果有上述的网络结构，比较合理的方式是禁用 tcp_tw_recyle 而开启 tcp_timestamps。
+禁用了 tcp_tw_recycle 其 TIME_OUT sockets 回收功能就没了，
+可以配合 tcp_tw_reuse 让 TIME_WAIT 降下来。</p>
+
+<p>其中 tcp_tw_recycle/tcp_tw_reuse 这两个官方的建议保持默认为 0，而 tcp_timestamps
+这个参数在特定的情况开启会引起很严重的问题。</p>
+
+<h4>TCP 其它</h4>
+<p>
+    <ul>
+
+        <li>net.ipv4.tcp_fin_timeout = 1 # FIN-WAIT-2 的时间</p>
+
+<p> 如 果套接字由本端要求关闭，这个参数决定了它保持在FIN-WAIT-2状态的时间。对端可以出错并永远不关闭连接，甚至意外当机。缺省值是60秒。2.2 内核的通常值是180秒，你可以按这个设置，但要记住的是，即使你的机器是一个轻载的WEB服务器，也有因为大量的死套接字而内存溢出的风险，FIN- WAIT-2的危险性比FIN-WAIT-1要小，因为它最多只能吃掉1.5K内存，但是它们的生存期长些。</p>
+
+<p>
+        <li>net.ipv4.tcp_max_syn_backlog = 262144 # 定义了 backlog queue 的半连接数量
+
+        <li>net.ipv4.tcp_max_orphans = 262144 #表示没有跟任何用户文件相关联的 socket 最大个数
+
+        <li>net.ipv4.tcp_syncookies = 1</p>
+
+<p>
+        <li>net.ipv4.tcp_frto = 2</p>
+
+<p>开启F-RTO,一个针对TCP重传超时(RTOs)的增强的恢复算法。
+在无线环境下特别有益处，因为在这种环境下分组丢失典型地是因为随机无线电干扰而不是中间路由器组塞。参考RFC 4318了解更多的细节。
+
+        <li>net.ipv4.tcp_thin_dupack = 0
+
+        <li>net.ipv4.tcp_reordering = 3 # tcp 包重新排序的数
+
+        <li>net.ipv4.tcp_early_retrans = 2 #</p>
+
+<p>
+        <li>net.ipv4.tcp_sack =1 #Enable RFC 2018 TCP Selective Acknowledgements
+
+        <li>net.ipv4.tcp_dsack = 1 #打开RFC 2883 TCP 重复的选择性应答(Duplicate SACK)支持。
+
+        <li>net.ipv4.tcp_window_scaling = 1 # 支持更大的TCP窗口(> 64K)
+    </ul>
+当客户端发起 SYN 请求后，服务端会立刻发送 SYN+ACK 的回应，该次半连接会到 backlog queue 中，
+服务器会等待客户返回 ACK，如果在一段时间内没有应答，服务器会重新发送刚刚的 SYN+ACK，
+经历了几次还是没有回应后，服务器会主动断开此次半连接。</p>
+
+<h3>ipv4 conf</h3>
+<p>
+    <ul>
+
+        <li>net.ipv4.conf.all.arp_announce = 2
+
+        <li>net.ipv4.conf.all.arp_ignore = 1
+
+        <li>net.ipv4.conf.all.arp_filter = 1
+
+        <li>net.ipv4.conf.default.rp_filter = 1
+
+        <li>net.ipv4.conf.default.rp_filter = 1
+
+        <li>net.ipv4.conf.all.rp_filter = 1
+
+        <li>net.ipv4.conf.all.proxy_arp = 1
+
+        <li>net.ipv4.conf.default.accept_source_route = 0
+
+        <li>net.ipv4.conf.default.accept_redirects = 0
+
+        <li>net.ipv4.conf.default.secure_redirects = 1
+
+        <li>net.ipv4.conf.all.accept_source_route = 0
+
+        <li>net.ipv4.conf.all.accept_redirects = 0
+
+        <li>net.ipv4.conf.all.secure_redirects = 1
+    </ul>
+
+    <ul>
+
+        <li>net.ipv4.icmp_echo_ignore_broadcasts = 1
+
+        <li>net.ipv4.icmp_ignore_bogus_error_responses = 1
+    </ul></p>
+
+<h3>IP</h3>
+<p>
+    <ul>
+
+        <li>net.ipv4.ip_forward = 0 #内核是否转发数据包 #<1
+
+        <li>net.ipv4.ip_local_port_range = 10240 65000 # 这个放大吧
+    </ul></p>
+
+<p>
+    <ul>
+
+        <li>/proc/sys/net/ipv4/ipfrag_low_thresh
+
+        <li>/proc/sys/net/ipv4/ipfrag_time
+
+        <li>ipfrag_high_thresh
+    </ul></p>
+
+<h3>内存管理</h3>
+<p>
+    <ul>
+
+        <li>vm.swappiness = 5 #<0</p>
+
+<p> 表示物理内存剩余5%时，才考虑使用swap，默认60，这显然非常不合理</p>
+
+<p>
+        <li>vm.dirty_ratio = 40</p>
+
+<p> 表示拿出物理内存的40%用于写缓存，而不立即将数据写入硬盘。
+ 由于硬盘是众所周知的瓶颈，扩大它可提升写的效率，40%是个比较合适的比例。</p>
+
+<p>
+        <li>vm.dirty_writeback_centisecs = 9000 #?
+
+        <li>vm.dirty_expire_centisecs = 18000 #?
+
+        <li>vm.dirty_background_ratio = 15 #?
+
+        <li>vm.overcommit_memory = 1 #?
+
+        <li>vm.overcommit_ratio = 50 #?</p>
+
+<p>
+        <li>vm.min_free_kbytes = 524288
+
+        <li>vm.vfs_cache_pressure = 100
+
+        <li>vm.min_free_kbytes = 524288</p>
+
+<p> 这个用于控制剩余内存的大小，524288=512M，可根据需要调整。
+ 如果某些任务临时需要大量内存，可临时将它调大然后调小，回收页面缓存。
+ 它比vm.drop_caches 要温和得多，后者更粗暴。</p>
+
+<p>
+        <li>vm.vfs_cache_pressure = 100</p>
+
+<p> 如果要尽快将脏数据刷进硬盘，提高它，比如150 。
+    </ul></p>
+
+<h3>netfilter</h3>
+<p>
+    <ul>
+
+        <li>net.ipv4.netfilter.ip_conntrack_max = 300000 #允许的最大跟踪连接条目 #?
+
+        <li>net.ipv4.netfilter.ip_conntrack_tcp_timeout_close_wait = 1 #?
+
+        <li>net.ipv4.netfilter.ip_conntrack_tcp_timeout_fin_wait = 1 #?
+
+        <li>net.ipv4.netfilter.ip_conntrack_tcp_timeout_time_wait = 1 #?
+
+        <li>net.ipv4.netfilter.ip_conntrack_tcp_timeout_established = 15 #?</p>
+
+<p>
+        <li>net.netfilter.nf_conntrack_max = 300000 #?
+
+        <li>net.netfilter.nf_conntrack_tcp_timeout_close_wait = 1 #?
+
+        <li>net.netfilter.nf_conntrack_tcp_timeout_fin_wait = 1 #?
+
+        <li>net.netfilter.nf_conntrack_tcp_timeout_time_wait = 1 #?
+
+        <li>net.netfilter.nf_conntrack_tcp_timeout_established = 15 #?
+    </ul></p>
+
+<h3>fs</h3>
+<p>
+    <ul>
+
+        <li>fs.file-max = 262144 #?
+
+        <li>fs.aio-max-nr = 1048576 #?
+    </ul></p>
+
+<h3>网络</h3>
+<p>
+    <ul>
+
+        <li>net.core.somaxconn = 8192</p>
+
+<p>表示socket的最大连接数，默认128，对于php-fpm使用unix socket情况下，需要调大。
+
+        <li>net.core.netdev_max_backlog = 262144</p>
+
+<p>在每个网络接口接收数据包的速率比内核处理这些包的速率快时，
+允许送到队列的数据包的最大数目。</p>
+
+<p>对于高吞吐的网络而言，默认的 100 肯定是不够的，
+一个 rrt 为 120ms 的千兆以太网络，可以设置成 10000 以上的值。</p>
+
+<p>
+        <li>net.core.optmem_max = 262144
+每个套接字所允许的最大缓冲区的大小。</p>
+
+<p>
+        <li>net.core.dev_weight = 10240 #?
+
+        <li>net.core.netdev_budget = 262144 #?
+
+        <li>net.netfilter.nf_conntrack_max = 131072
+
+        <li>net.nf_conntrack_max = 131072
+
+        <li>net.ipv6.conf.all.disable_ipv6 = 1
+
+        <li>net.netfilter.nf_conntrack_tcp_timeout_established = 3600</p>
+
+<p>默认2天时间，多数情况下，调小这个参数是有益的，如果是tcp长连接，
+这个参数可能不太合适。
+
+        <li>net.ipv4.neigh.default.gc_thresh1 = 10240 #?
+
+        <li>net.ipv4.neigh.default.gc_thresh2 = 40960 #?
+
+        <li>net.ipv4.neigh.default.gc_thresh3 = 81920 #?
+    </ul></p>
+
+<h3>汇总</h3>
+<p>
+
+    <ul>
+
+        <li>kernel.core_uses_pid = 1 # core 文件名是否添加 PID
+
+        <li>kernel.pid_max = 4194303 #* 系统最大pid值 默认:32768
+
+        <li>kernel.ctrl-alt-del = 1
+
+        <li>kernel.msgmnb = 65536 # 每个消息队列的最大字节限制
+
+        <li>kernel.msgmax = 65536 # 最大消息长度
+
+        <li>kernel.msgmni = 65536 #+ 最大消息队列数
+
+        <li>kernel.shmmni = 4096
+
+        <li>kernel.shmmax = 8589934592
+
+        <li>kernel.shmall = 8589934592
+
+        <li>kernel.sem=250 32000 100 128
+
+        <li>net.core.wmem_max = 16777216
+
+        <li>net.core.wmem_default = 131072 #<16777216
+
+        <li>net.core.rmem_max = 16777216
+
+        <li>net.core.rmem_default = 131072 #<16777216
+
+        <li>net.ipv4.tcp_mem = 786432 1048576 1572864
+
+        <li>net.ipv4.tcp_wmem = 4096 16384 4194304
+
+        <li>net.ipv4.tcp_rmem = 4096 16384 4194304
+
+        <li>net.ipv4.tcp_keepalive_time = 30 # TCP 发出第一个 keepalive 信息之前等待的时间
+
+        <li>net.ipv4.tcp_keepalive_intvl = 10 # keepalive 的时间间隔，默认是
+
+        <li>net.ipv4.tcp_keepalive_probes = 3 # 在认定连接失效之前，发送多少个TCP的keepalive探测包。
+
+        <li>net.ipv4.tcp_tw_reuse = 1 #*
+
+        <li>net.ipv4.tcp_tw_recycle = 1 #*
+
+        <li>net.ipv4.tcp_max_tw_buckets = 10000
+
+        <li>net.ipv4.tcp_congestion_control = cubic
+
+        <li>net.ipv4.tcp_retries1 = 3
+
+        <li>net.ipv4.tcp_retries2 = 5
+
+        <li>net.ipv4.tcp_syn_retries = 1 # 源站的网络并不好, 是不是太小了
+
+        <li>net.ipv4.tcp_synack_retries = 1
+
+        <li>net.ipv4.tcp_orphan_retries
+
+        <li>net.ipv4.tcp_timestamps = 0
+
+        <li>net.ipv4.tcp_fin_timeout = 1 # FIN-WAIT-2 的时间
+
+        <li>net.ipv4.tcp_max_syn_backlog = 262144 # 定义了 backlog queue 的半连接数量
+
+        <li>net.ipv4.tcp_max_orphans = 262144 #表示没有跟任何用户文件相关联的 socket 最大个数
+
+        <li>net.ipv4.tcp_syncookies = 1
+
+        <li>net.ipv4.tcp_frto = 2
+
+        <li>net.ipv4.tcp_thin_dupack = 0
+
+        <li>net.ipv4.tcp_reordering = 3 # tcp 包重新排序的数
+
+        <li>net.ipv4.tcp_early_retrans = 2 #
+
+        <li>net.ipv4.tcp_sack =1 #Enable RFC 2018 TCP Selective Acknowledgements
+
+        <li>net.ipv4.tcp_dsack = 1 #打开RFC 2883 TCP 重复的选择性应答(Duplicate SACK)支持。
+
+        <li>net.ipv4.tcp_window_scaling = 1 # 支持更大的TCP窗口(> 64K)
+
+        <li>net.ipv4.conf.all.arp_announce = 2
+
+        <li>net.ipv4.conf.all.arp_ignore = 1
+
+        <li>net.ipv4.conf.all.arp_filter = 1
+
+        <li>net.ipv4.conf.default.rp_filter = 1
+
+        <li>net.ipv4.conf.default.rp_filter = 1
+
+        <li>net.ipv4.conf.all.rp_filter = 1
+
+        <li>net.ipv4.conf.all.proxy_arp = 1
+
+        <li>net.ipv4.conf.default.accept_source_route = 0
+
+        <li>net.ipv4.conf.default.accept_redirects = 0
+
+        <li>net.ipv4.conf.default.secure_redirects = 1
+
+        <li>net.ipv4.conf.all.accept_source_route = 0
+
+        <li>net.ipv4.conf.all.accept_redirects = 0
+
+        <li>net.ipv4.conf.all.secure_redirects = 1
+
+        <li>net.ipv4.icmp_echo_ignore_broadcasts = 1
+
+        <li>net.ipv4.icmp_ignore_bogus_error_responses = 1
+
+        <li>net.ipv4.ip_forward = 0 #内核是否转发数据包 #<1
+
+        <li>net.ipv4.ip_local_port_range = 10240 65000 # 这个放大吧
+
+        <li>/proc/sys/net/ipv4/ipfrag_low_thresh
+
+        <li>/proc/sys/net/ipv4/ipfrag_time
+
+        <li>ipfrag_high_thresh
+
+        <li>vm.swappiness = 5 #<0
+
+        <li>vm.dirty_ratio = 40
+
+        <li>vm.dirty_writeback_centisecs = 9000 #?
+
+        <li>vm.dirty_expire_centisecs = 18000 #?
+
+        <li>vm.dirty_background_ratio = 15 #?
+
+        <li>vm.overcommit_memory = 1 #?
+
+        <li>vm.overcommit_ratio = 50 #?
+
+        <li>vm.min_free_kbytes = 524288
+
+        <li>vm.vfs_cache_pressure = 100
+
+        <li>vm.min_free_kbytes = 524288
+
+        <li>vm.vfs_cache_pressure = 100
+
+        <li>net.ipv4.netfilter.ip_conntrack_max = 300000 #允许的最大跟踪连接条目 #?
+
+        <li>net.ipv4.netfilter.ip_conntrack_tcp_timeout_close_wait = 1 #?
+
+        <li>net.ipv4.netfilter.ip_conntrack_tcp_timeout_fin_wait = 1 #?
+
+        <li>net.ipv4.netfilter.ip_conntrack_tcp_timeout_time_wait = 1 #?
+
+        <li>net.ipv4.netfilter.ip_conntrack_tcp_timeout_established = 15 #?
+
+        <li>net.netfilter.nf_conntrack_max = 300000 #?
+
+        <li>net.netfilter.nf_conntrack_tcp_timeout_close_wait = 1 #?
+
+        <li>net.netfilter.nf_conntrack_tcp_timeout_fin_wait = 1 #?
+
+        <li>net.netfilter.nf_conntrack_tcp_timeout_time_wait = 1 #?
+
+        <li>net.netfilter.nf_conntrack_tcp_timeout_established = 15 #?
+
+        <li>fs.file-max = 262144 #?
+
+        <li>fs.aio-max-nr = 1048576 #?
+
+        <li>net.core.somaxconn = 8192
+
+        <li>net.core.netdev_max_backlog = 262144
+
+        <li>net.core.optmem_max = 262144
+
+        <li>net.core.dev_weight = 10240 #?
+
+        <li>net.core.netdev_budget = 262144 #?
+
+        <li>net.netfilter.nf_conntrack_max = 131072
+
+        <li>net.nf_conntrack_max = 131072
+
+        <li>net.ipv6.conf.all.disable_ipv6 = 1
+
+        <li>net.netfilter.nf_conntrack_tcp_timeout_established = 3600
+
+        <li>net.ipv4.neigh.default.gc_thresh1 = 10240 #?
+
+        <li>net.ipv4.neigh.default.gc_thresh2 = 40960 #?
+
+        <li>net.ipv4.neigh.default.gc_thresh3 = 81920 #?
+    </ul></p>

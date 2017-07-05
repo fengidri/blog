@@ -1,0 +1,142 @@
+<p></p>
+
+<h3>介绍</h3>
+<p>nginx中使用的锁是自己来实现的，这里锁的实现分为两种情况，
+一种是基于原子操作的情况，也就是由NGX_HAVE_ATOMIC_OPS这个宏来进行控制的，
+另一种是基于文件实现。</p>
+
+<p>本文主要说明原子锁. 锁的本质就是标识, 在计算机中这个标识自然是
+放到在内存中的. 如果只是这样, 其实是没有意义的, 锁的目的就是
+对于内存中的数据的控制. 所以其实锁的实现最重要的是
+可以在不被打断的情况下设置这个标识. 不被打断的操作就是原子操作.
+如果在不支持原子操作的CPU 上, 还可以使用文件锁.</p>
+
+<p>nginx 上锁的另一个特点是工作于多个进程, 我们一般的锁是工作于多线程.
+所以这里就有多进程数据共享的问题.</p>
+
+<p>nginx 原子锁使用 mmap 来共享信息, 在不同的cpu 体系中有使用不同的汇编语言来
+实现原子操作.</p>
+
+<h3>ngx 锁的原理</h3>
+<p></p>
+
+<h4>创建锁</h4>
+<p>ngx 通过 mmap 或 shm 来创建一个共享内存. 这个内存在多个 worker 是相互
+共享的.</p>
+
+<h4>lock</h4>
+<p>进行 lock 时有两个函数 lock, trylock. 也就是阻塞与非阻塞的. 下面分析一下
+实际的实现.</p>
+
+<p>我们自己来想一下, 如何实现 lock.
+一个原子性的操作完成两个动作: 查看当前有没有锁上, 锁上.
+假设在实际的实现中当变量是1 表示锁上了. 这里我们要实现的其实是
+原子性地把变量从0 变成1. 这个过程在 ngx 中是由函数ngx_atomic_cmp_set
+实现的. 这个过程是锁的灵魂所在.
+在不现的系统中有这样的原子操作有不现的实现方法.
+一些系统中有库支持, 没有的情况下 nginx 自己使用汇编实现了一些平台上的
+原子性的 cmp and set. 如 x86 下的:
+<pre>
+static ngx_inline ngx_atomic_uint_t
+ngx_atomic_cmp_set(ngx_atomic_t *lock, ngx_atomic_uint_t old,
+    ngx_atomic_uint_t set)
+{
+    u_char  res;
+
+    __asm__ volatile (
+
+         NGX_SMP_LOCK
+    "    cmpxchgl  %3, %1;   "
+    "    sete      %0;       "
+
+    : "=a" (res) : "m" (*lock), "a" (old), "r" (set) : "cc", "memory");
+
+    return res;
+}
+</pre>
+</p>
+
+<p>说到了这里, 锁的实现就没有那么神秘了. 在 ngx 中实现中, 会把标识的值改成自己
+进程的 pid.</p>
+
+<p>trylock 是的操作是尝试一次操作. 可以看到
+实现如下:
+<pre>
+static ngx_inline ngx_uint_t
+ngx_shmtx_trylock(ngx_shmtx_t *mtx)
+{
+    return (*mtx-&gt;lock == 0 &amp;&amp; ngx_atomic_cmp_set(mtx-&gt;lock, 0, ngx_pid));
+}
+</pre>
+
+代码比较简单, 只是没有一上来就调用ngx_atomic_cmp_set, 而是
+先查看了当前的值是不是可以 lock, 如果可以的情况下再尝试 lock. 这样细节的
+实现, 保证了性能.</p>
+
+<p>spinklock 的区别在于要不断尝试进行 lock. 但是如何实现一个不断循环的
+lock 而不影响系统的性能.
+看一下 ngx 的实现:
+<pre>
+void
+ngx_spinlock(ngx_atomic_t *lock, ngx_atomic_int_t value, ngx_uint_t spin)
+{
+
+#if (NGX_HAVE_ATOMIC_OPS)
+
+    ngx_uint_t  i, n;
+
+    for ( ;; ) {
+
+         //如果lock为0,则说明没有进程持有锁，因此设置lock为value(为当前进程id),然后返回。
+         // 这与 trylock 相同.
+        if (*lock == 0 &amp;&amp; ngx_atomic_cmp_set(lock, 0, value)) {
+            return;
+        }
+
+        //如果cpu个数大于1(也就是多核),则进入spin-wait loop阶段。
+        if (ngx_ncpu &gt; 1) {
+
+            //开始进入循环。
+            for (n = 1; n &lt; spin; n &lt;&lt;= 1) {
+
+                //下面这段就是纯粹的spin-loop wait。
+                for (i = 0; i &lt; n; i++) {
+                    //这个函数其实就是执行"PAUSE"指令，接下来会解释这个指令。
+                    ngx_cpu_pause();
+                }
+                //然后重新获取锁，如果获得则直接返回。
+                if (*lock == 0 &amp;&amp; ngx_atomic_cmp_set(lock, 0, value)) {
+                    return;
+                }
+            }
+        }
+
+        //这个函数调用的是sched_yield，它会强迫当前运行的进程放弃占有处理器。
+        ngx_sched_yield();
+    }
+
+#else
+
+#if (NGX_THREADS)
+
+#error ngx_spinlock() or ngx_atomic_cmp_set() are not defined !
+
+#endif
+
+#endif
+
+}
+</pre>
+
+对于 spinlock 的实现是比较复杂的, 要考虑一些性能上的问题.
+这一部份的实现与CPU 是非常相关的.</p>
+
+<h4>unlock</h4>
+<p>这个就比较简单了, 与当前 pid 比较, 如果相等就设置为0;
+<pre>
+#define ngx_shmtx_unlock(mtx) (void) ngx_atomic_cmp_set((mtx)-&gt;lock, ngx_pid, 0)
+</pre>
+</p>
+
+<h3>参考</h3>
+<p>&nbsp;<a href=http://simohayha.iteye.com/blog/658012 >nginx中锁的设计以及惊群的处理</a>&nbsp;&nbsp;<a href=http://blog.sina.com.cn/s/blog_605f5b4f0100zcsx.html >Spin Wait Loop</a>&nbsp;</p>

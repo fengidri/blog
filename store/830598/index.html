@@ -1,0 +1,30 @@
+<p></p>
+
+<h3>字符format 的编码转换</h3>
+<p><pre>
+"Role:%s"  %name
+</pre>
+</p>
+
+<p>当这里的name 不是str 而是unicode的时候, python 会把前面的字符转换成unicode.
+那么如果前而的字符串有中文字符. 那么这里就会出现问题. 因为python 会试用ascii的编码进行转移
+成unicode. 这样就出错了.</p>
+
+<h3>io 输出编码</h3>
+<p>print 在输出的时候会进行默认的编码转换. 这个编码来自于sys.stdout.encoding. sys.stdout.encoding的值编码则来自于环境变量.</p>
+
+<p>
+    <ul>
+
+        <li>如果有PYTHONIOENCODING 变量, 则使用这个变量的值.
+
+        <li>如果没有PYTHONIOENCODING, 但是在tty 中就使用LC_CTYPE(or LC_ALL)
+
+        <li>如果没有PYTHONIOENCODING, 也不是在tty中, 就为空.
+    </ul></p>
+
+<p>注意这里有对于是否使用tty 转出进行了区分. 那么在使用ssh 登录到运程的时候执行python 程序与通过 ssh root@host 'cmd' 的方式执行的
+python 程序就是不同的了.</p>
+
+<h3>参考</h3>
+<p>&nbsp;<a href=http://www.macfreek.nl/memory/Encoding_of_Python_stdout >Encoding of Python stdout</a>&nbsp;</p>

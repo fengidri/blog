@@ -1,0 +1,36 @@
+<p>
+对于 bcache 磁盘分成 backing 与 cache.
+使用磁盘之前要在磁盘上写入一些bcache 的信息.</p>
+
+<p>加载 bcache 之后, /sys/fs/bcache/ 下会列出可用的</p>
+
+<p>制做后端磁盘:
+<pre>
+make-bcache -B /dev/sde
+</pre>
+</p>
+
+<p>制做缓存磁盘:
+<pre>
+make-bcache -C /dev/sdf
+</pre>
+</p>
+
+<p>手动注册设备:
+<pre>
+echo /dev/sde &gt; /sys/fs/bcache/register
+echo /dev/sdf &gt; /sys/fs/bcache/register
+</pre>
+</p>
+
+<p>设置 backing 的 cache 层:
+<pre>
+echo cset.uuid &gt; /sys/block/bcache0/bcache/attach
+</pre>
+</p>
+
+<p>backing 与 cache 分离:
+<pre>
+echo 1 &gt; /sys/block/bcache0/bcache/detach
+</pre>
+</p>

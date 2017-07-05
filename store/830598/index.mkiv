@@ -1,0 +1,31 @@
+%title: python 编码几则
+%class: python
+%%
+
+
+\section{字符format 的编码转换}
+\starttyping
+"Role:%s"  %name
+\stoptyping
+
+当这里的name 不是str 而是unicode的时候, python 会把前面的字符转换成unicode.
+那么如果前而的字符串有中文字符. 那么这里就会出现问题. 因为python 会试用ascii的编码进行转移
+成unicode. 这样就出错了.
+
+
+\section{io 输出编码}
+print 在输出的时候会进行默认的编码转换. 这个编码来自于sys.stdout.encoding. sys.stdout.encoding的值编码则来自于环境变量.
+
+
+\startitemize
+\item  如果有PYTHONIOENCODING 变量, 则使用这个变量的值.
+\item 如果没有PYTHONIOENCODING, 但是在tty 中就使用LC_CTYPE(or LC_ALL)
+\item 如果没有PYTHONIOENCODING, 也不是在tty中, 就为空.
+\stopitemize
+
+注意这里有对于是否使用tty 转出进行了区分. 那么在使用ssh 登录到运程的时候执行python 程序与通过 ssh root@host 'cmd' 的方式执行的
+python 程序就是不同的了.
+
+\section{参考}
+
+\goto{Encoding of Python stdout}{http://www.macfreek.nl/memory/Encoding_of_Python_stdout}

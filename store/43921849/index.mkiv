@@ -1,0 +1,173 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Title: bcache 源码初始化
+%Class: kernel
+%Post:1
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+super.c 用于对于磁盘上的 super data 进行读取, 同时也是 bcache
+ 的初始化模块.
+
+ 在 bcache 进行初始化的过程中, 使用 sysfs_create_files 创建
+ /sys/fs/bcache 目录与目录下的 register, register_quiet.
+
+ 调用 echo '/dev/sda' > /sys/fs/bcache/register, 就会触发回调
+ register_bcache@super.c;
+\starttyping
+static ssize_t register_bcache(struct kobject *k, struct kobj_attribute *attr,
+			       const char *buffer, size_t size)
+{
+	ssize_t ret = size;
+	const char *err = "cannot allocate memory";
+	char *path = NULL;
+	struct cache_sb *sb = NULL;
+	struct block_device *bdev = NULL;
+	struct page *sb_page = NULL;
+
+	err = "failed to open device";
+	bdev = blkdev_get_by_path(strim(path),
+				  FMODE_READ|FMODE_WRITE|FMODE_EXCL,
+				  sb);
+	if (IS_ERR(bdev)) {
+		if (bdev == ERR_PTR(-EBUSY)) {
+			bdev = lookup_bdev(strim(path));
+			mutex_lock(&bch_register_lock);
+			if (!IS_ERR(bdev) && bch_is_open(bdev))
+				err = "device already registered";
+			else
+				err = "device busy";
+			mutex_unlock(&bch_register_lock);
+		}
+		goto err;
+	}
+
+	err = read_super(sb, bdev, &sb_page); // 读取磁盘的 super 信息
+	if (err)
+		goto err_close;
+
+	if (SB_IS_BDEV(sb)) { // 处理 backing 设备
+		struct cached_dev *dc = kzalloc(sizeof(*dc), GFP_KERNEL);
+		if (!dc)
+			goto err_close;
+
+		mutex_lock(&bch_register_lock);
+		register_bdev(sb, sb_page, bdev, dc);
+		mutex_unlock(&bch_register_lock);
+	} else { // 处理缓存设备
+		struct cache *ca = kzalloc(sizeof(*ca), GFP_KERNEL);
+		if (!ca)
+			goto err_close;
+
+		register_cache(sb, sb_page, bdev, ca);
+	}
+}
+\stoptyping
+
+在 register_bdev 里完成对于 backing 的注册:
+
+\starttyping
+
+/* Cached device - bcache superblock */
+
+static void register_bdev(struct cache_sb *sb, struct page *sb_page,
+				 struct block_device *bdev,
+				 struct cached_dev *dc)
+{
+	char name[BDEVNAME_SIZE];
+	const char *err = "cannot allocate memory";
+	struct cache_set *c;
+
+    // 使用 sb 信息完善 dc 数据结构
+	memcpy(&dc->sb, sb, sizeof(struct cache_sb));
+	dc->bdev = bdev;
+	dc->bdev->bd_holder = dc;
+
+	bio_init(&dc->sb_bio);
+	dc->sb_bio.bi_max_vecs	= 1;
+	dc->sb_bio.bi_io_vec	= dc->sb_bio.bi_inline_vecs;
+	dc->sb_bio.bi_io_vec[0].bv_page = sb_page;
+	get_page(sb_page);
+
+    // 初始化 创建 /dev/bcache0 所要使用的数据与信息
+	if (cached_dev_init(dc, sb->block_size << 9))
+		goto err;
+
+    // sysfs 中增加些 bcache 的目录相关信息. 增加 /dev/bcache0 设备
+	err = "error creating kobject";
+	if (kobject_add(&dc->disk.kobj, &part_to_dev(bdev->bd_part)->kobj,
+			"bcache"))
+		goto err;
+	if (bch_cache_accounting_add_kobjs(&dc->accounting, &dc->disk.kobj))
+		goto err;
+
+	pr_info("registered backing device %s", bdevname(bdev, name));
+
+	list_add(&dc->list, &uncached_devices);
+	list_for_each_entry(c, &bch_cache_sets, list)
+		bch_cached_dev_attach(dc, c);
+
+	if (BDEV_STATE(&dc->sb) == BDEV_STATE_NONE ||
+	    BDEV_STATE(&dc->sb) == BDEV_STATE_STALE)
+		bch_cached_dev_run(dc);
+
+	return;
+err:
+	pr_notice("error opening %s: %s", bdevname(bdev, name), err);
+	bcache_device_stop(&dc->disk);
+}
+\stoptyping
+
+以上主要完成数据结构的初始化过程. cached_dev_init 完成对于 /dev/bcache0 的
+构造过程. 首先是 dc 数据结构中的一些变量与参数的初始化过程.
+
+\starttyping
+static int cached_dev_init(struct cached_dev *dc, unsigned block_size)
+{
+	int ret;
+	struct io *io;
+	struct request_queue *q = bdev_get_queue(dc->bdev);
+
+	__module_get(THIS_MODULE);
+	INIT_LIST_HEAD(&dc->list);
+	closure_init(&dc->disk.cl, NULL);
+	set_closure_fn(&dc->disk.cl, cached_dev_flush, system_wq);
+	kobject_init(&dc->disk.kobj, &bch_cached_dev_ktype);
+	INIT_WORK(&dc->detach, cached_dev_detach_finish);
+	sema_init(&dc->sb_write_mutex, 1);
+	INIT_LIST_HEAD(&dc->io_lru);
+	spin_lock_init(&dc->io_lock);
+	bch_cache_accounting_init(&dc->accounting, &dc->disk.cl);
+
+	dc->sequential_cutoff		= 4 << 20;
+
+	for (io = dc->io; io < dc->io + RECENT_IO; io++) {
+		list_add(&io->lru, &dc->io_lru);
+		hlist_add_head(&io->hash, dc->io_hash + RECENT_IO);
+	}
+
+	dc->disk.stripe_size = q->limits.io_opt >> 9;
+
+	if (dc->disk.stripe_size)
+		dc->partial_stripes_expensive =
+			q->limits.raid_partial_stripes_expensive;
+
+    // 完成 dc->disk 的初始化.
+	ret = bcache_device_init(&dc->disk, block_size,
+			 dc->bdev->bd_part->nr_sects - dc->sb.data_offset);
+	if (ret)
+		return ret;
+
+	set_capacity(dc->disk.disk,
+		     dc->bdev->bd_part->nr_sects - dc->sb.data_offset);
+
+	dc->disk.disk->queue->backing_dev_info.ra_pages =
+		max(dc->disk.disk->queue->backing_dev_info.ra_pages,
+		    q->backing_dev_info.ra_pages);
+
+    // 设置 bcache 的 io 操作函数.
+    // 这些操作在 request.c 中
+	bch_cached_dev_request_init(dc);
+	bch_cached_dev_writeback_init(dc);
+	return 0;
+}
+\stoptyping

@@ -1,0 +1,40 @@
+<p></p>
+
+<p>共享内存在计算 res 的时候是怎么计算的. 这个问题比较头痛. 我们在统计系统的内存占用的时候总是会有这样的
+疑问.</p>
+
+<p><pre>
+#include &lt;stdio.h&gt;
+#include &lt;stddef.h&gt;
+#include &lt;unistd.h&gt;
+#include &lt;string.h&gt;
+
+#include &lt;sys/mman.h&gt;
+
+
+int size = 1024 * 1024 * 10;
+
+main()
+{
+    void *p;
+    p = mmap(NULL, size, PROT_READ|PROT_WRITE, MAP_SHARED|MAP_ANON,-1,0);
+    memset(p, 0, size);
+
+    if (0 == fork())
+    {
+        memset(p + size/2, 0, size/2);
+        sleep(3999999999);
+    }
+
+    sleep(3999999999);
+}
+</pre>
+</p>
+
+<p>使用这样的方式进行了一下测试, 发现 ps 出的父进程使用了 10M 左右的内存, 子进程使用了 5M 的内存.
+这是实际上子进程的这 5M 的内存, 父进程也在使用. 所以 RES 统计的结果是, 进程实际使用的到的内存,
+无论这个内存是不是同时也被其它的进程使用了.</p>
+
+<p>同理, 我们在统计系统的所有进程使用的内存的时候, 共享内存都是重复计算的.</p>
+
+<p>此外还有一个就是进程文件的, 特别是库的占用空间都是重复计算了的.</p>

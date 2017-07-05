@@ -1,0 +1,55 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Title: ATS - ChangeLog
+%Class: ats
+%Post:1
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{HTTP/2 支持}
+\startitemize
+\item  *) [TS-3530] HTTP/2 memory leak with headers and more...
+\item  *) [TS-3519] HTTP/2 seeing a lot of GOAWAY frames being sent
+\item  *) [TS-3513] HTTP/2 core dump. Fixed problem with cursor not advancing during parsing
+\item  *) [TS-3475] Add a few records.config options for controlling the HTTP/2 SETTINGS. Thanks to Masakazu for all the reviews and additions.
+\item  *) [TS-3479] Remove verbose Warning() from HTTP/2 connections.
+\item  *) [TS-3413] High CPU utiliziation when processing HTTP/2 traffic.
+\item  *) [TS-3405] Memory use after free in HTTP/2.
+\item  *) [TS-3152] stop offerring HTTP/2 over TLS by default.
+\item  *) [TS-3415] Http/2 sending FIN stream too early.
+\item  *) [TS-3697] Fix frame type check for http/2.
+
+\stopitemize
+
+\section{http 协议行为}
+\startitemize
+\item  *) [TS-2419] Don't close client connection when responding with a 204 and
+   there is no body.
+\item  *) [TS-312] Add option to always share keep-alive connections to the origin
+   server.
+\stopitemize
+
+\section{SSL}
+\startitemize
+\item *) [TS-3243] Removing warnings from loading certificates with duplicated names.
+\item *) [TS-1146] Add RFC 5077 TLS session ticket support.  Author: Wei Sun <sunwei@yahoo-inc.com>
+\stopitemize
+
+\section{aio}
+\startitemize
+\item *) [TS-2138] Fix the bug that restarting ats cause cache data loss if
+  enable the native-aio.
+\stopitemize
+
+\section{cache}
+\startitemize
+\item  *) [TS-2008] Cache control with multiple suffixes.  Author: bettydramit <b13621367396@gmail.com>
+\stopitemize
+
+\section{memory leak}
+\startitemize
+\item  *) [TS-2276] manager memory leak in some case.  Author: Yu Qing
+\stopitemize
+
+\section{other}
+\startitemize
+\item  *) [TS-2235] url_print should NOT output "?" for empty query string.  Author: Yu Qing
+\stopitemize

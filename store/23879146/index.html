@@ -1,0 +1,71 @@
+<p>
+
+storage.config用于列出所有用于缓存的文件, 目录或磁盘.
+这个文件的修改要重启生效.</p>
+
+<h3>格式</h3>
+<p>storage.config文件是由于如下的行构成的:
+<pre>
+pathname size [ volume=number ] [ id=string ]
+</pre>
+</p>
+
+<p>
+    <ul>
+
+        <li>pathname 是分区, 目录, 文件的名字.
+
+        <li>size 指定 pathname 使用的大小
+
+        <li>volume 是在 volume.conf 或 hosting.config 中的 volume number.
+
+        <li>id 是由 Assignment Table 进行分配.
+    </ul></p>
+
+<p>对于目录, size 必须指定, 而文件与分区则是可选的. valume 与id 都是可选的.</p>
+
+<p><b>注意:</b>The volume option is independent of the seed option and either can be used with or without the other, and their ordering on the line is irrelevant.</p>
+
+<p><b>注意:</b>If the id option is used every use must have a unique value for string.</p>
+
+<p>你可以使用任意大小的分区, 但是为更好的性能:
+
+    <ul>
+
+        <li>使用原始磁盘分区
+
+        <li>对于任意的disk, 所有的分区大小相同
+
+        <li>For each node, use the same number of partitions on all disks.
+
+        <li>把相似的storage 组织进不同的 volumes.
+For example split out SSD’s or RAM drives into their own volume.
+    </ul>
+一个格式化或原始的磁盘的大小至少 128 MB.
+当使用原始 disk 或分区, 你应该保证 Traffic Server user 有对于
+原始disk 或分区的读写权限.
+一个好的做法是保证磁盘文件的权限为'g+rw', 并且 ATS 的运行用户在
+拥有磁盘文件的组里.
+然而，一些操作系统具有更强的要求, 下面会提到.</p>
+
+<p>可用的单位如下:
+
+    <ul>
+
+        <li>K Kilobytes (1024 bytes)
+
+        <li>M Megabytes (1024^2 or 1,048,576 bytes)
+
+        <li>G Gigabytes (1024^3 or 1,073,741,824 bytes)
+
+        <li>T Terabytes (1024^4 or 1,099,511,627,776 bytes)
+    </ul></p>
+
+<h3>Assignment Table</h3>
+<p></p>
+
+<h3>Linux Example</h3>
+<p></p>
+
+<h3>参考</h3>
+<p>&nbsp;<a href=https://docs.trafficserver.apache.org/en/latest/reference/configuration/storage.config.en.html ></a>&nbsp;</p>

@@ -1,0 +1,70 @@
+<p></p>
+
+<h3>共享内存</h3>
+<p>共享内存允许两个或多个进程进程共享同一块内存(这块内存会映射到各个进程自己独立的地址空间)
+ 从而使得这些进程可以相互通信。</p>
+
+<p> 在GNU/Linux中所有的进程都有唯一的虚拟地址空间，而共享内存应用编程接口API允许一个进程使
+ 用公共内存区段。但是对内存的共享访问其复杂度也相应增加。共享内存的优点是简易性。
+ 使用消息队列时，一个进程要向队列中写入消息，这要引起从用户地址空间向内核地址空间的一次复制，
+ 同样一个进程进行消息读取时也要进行一次复制。共享内存的优点是完全省去了这些操作。
+ 共享内存会映射到进程的虚拟地址空间，进程对其可以直接访问，避免了数据的复制过程。
+ 因此，共享内存是GNU/Linux现在可用的最快速的IPC机制。
+ 进程退出时会自动和已经挂接的共享内存区段分离，但是仍建议当进程不再使用共享区段时
+ 调用shmdt来卸载区段。</p>
+
+<p> 注意，当一个进程分支出父进程和子进程时，父进程先前创建的所有共享内存区段都会被子进程继承。
+ 如果区段已经做了删除标记(在前面以IPC——RMID指令调用shmctl)，而当前挂接数已经变为0，
+ 这个区段就会被移除。
+<pre>
+shmget(  )  创建一个新的共享内存区段
+            取得一个共享内存区段的描述符
+shmctl(  )  取得一个共享内存区段的信息
+            为一个共享内存区段设置特定的信息
+            移除一个共享内存区段
+shmat(  )   挂接一个共享内存区段
+shmdt(  )   与一个共享内存区段的分离
+</pre>
+</p>
+
+<p><pre>
+#include &lt;stdio.h&gt;
+#include &lt;sys/shm.h&gt;
+#include &lt;sys/stat.h&gt;
+int main(int argc, char **argv)
+{
+    int segment_id;
+    char* shared_memory;
+    struct shmid_ds shmbuffer;
+    int segment_size;
+    const int shared_segment_size = 0x6400; /* 分配一个共享内存块 */
+
+    if ( argc &gt; 1 )
+    {
+        segment_id = atoi( argv[1] );
+    }
+    else
+    {
+        segment_id = shmget(IPC_PRIVATE, shared_segment_size, \
+                IPC_CREAT|IPC_EXCL|S_IRUSR|S_IWUSR ); /* 绑定到共享内存块 */
+    }
+    printf( "ID:%d\n" , segment_id );
+    shared_memory = (char*)shmat(segment_id, 0, 0);
+
+    printf("shared memory attached at address %p\n", shared_memory); /* 确定共享内存的大小 */
+    shmctl(segment_id, IPC_STAT, &amp;shmbuffer);
+    segment_size = shmbuffer.shm_segsz;
+    printf("segment size: %d\n", segment_size);
+    if ( argc &gt; 1 )
+    {
+        printf("%s\n", shared_memory); /* 输出共享内存中的字符串 */
+    }
+    else
+    {
+        sprintf(shared_memory, "Hello, world."); /* 在共享内存中写入一个字符串 */
+    }
+    shmdt(shared_memory); /* 脱离该共享内存块 */
+    return 0;
+}
+</pre>
+</p>

@@ -1,0 +1,99 @@
+<p>
+对于 aio 的使用是一个问题, 本身 aio 也是事件模型, 但是却不能直接用于 epoll 这样的
+多路复用接口, 这对于实现高性能的服务是一个问题, 特别当与 网络同时使用的时候.
+这个时候就非常想让 aio 的事件可以在 epoll 里进行监听.
+而 nginx 中实现这个功能, 下面就对于 nginx 时行分析得到, 看看 ngx 是怎么实现的.</p>
+
+<p>先介绍一些有 linux 下的意思的功能, 理解了这些功能, 自己就能理解 ngx 是如何实现的.</p>
+
+<h3>eventfd</h3>
+<p>实现了线程之间事件通知的方式，eventfd的缓冲区大小是sizeof(uint64_t)；
+向其write可以递增这个计数器，read操作可以读取，并进行清零；
+eventfd也可以放到监听队列中，当计数器不是0时，有可读事件发生，可以进行读取。</p>
+
+<p>API 如下:
+<pre>
+int eventfd(unsigned int initval, int flags);
+</pre>
+</p>
+
+<p>这是一个特别的 fd, 因为它不对应于文件 fd, 不对应于某个文件, 而是对应于一个 64 位的内存空间.
+但是却有如同文件 fd 一样可以在某个时机产生可读事件. 但是没有可写事件相关的功能.</p>
+
+<p>从另一个角度来说, 这是一个用于消息单向传递的机制. 可以工作于线程和父子进程之间.</p>
+
+<h3>aio resfd</h3>
+<p><pre>
+/*
+ * we always use a 64bit off_t when communicating
+ * with userland.  its up to libraries to do the
+ * proper padding and aio_error abstraction
+ */
+
+struct iocb {
+    /* these are internal to the kernel/libc. */
+    __u64   aio_data;   /* data to be returned in event's data */
+    __u32   PADDED(aio_key, aio_reserved1);
+                /* the kernel sets aio_key to the req # */
+
+    /* common fields */
+    __u16   aio_lio_opcode; /* see IOCB_CMD_ above */
+    __s16   aio_reqprio;
+    __u32   aio_fildes;
+
+    __u64   aio_buf;
+    __u64   aio_nbytes;
+    __s64   aio_offset;
+
+    /* extra parameters */
+    __u64   aio_reserved2;  /* TODO: use this for a (struct sigevent *) */
+
+    /* flags for the "struct iocb" */
+    __u32   aio_flags;
+
+    /*
+     * if the IOCB_FLAG_RESFD flag of "aio_flags" is set, this is an
+     * eventfd to signal AIO readiness to
+     */
+    __u32   aio_resfd;
+}; /* 64 bytes */
+</pre>
+</p>
+
+<p>在 aio_flags 设置了 IOCB_FLAG_RESFD 的情况下, 在 aio 完成的时候, 内核会触发这个 fd.</p>
+
+<h3>getevents</h3>
+<p><pre>
+
+struct io_event {
+    uint64_t  data;  /* the data field from the iocb */
+    uint64_t  obj;   /* what iocb this event came from */
+    int64_t   res;   /* result code for this event */
+    int64_t   res2;  /* secondary result */
+};
+int io_getevents(aio_context_t ctx, long min_nr, long nr, struct io_event *events,
+    struct timespec *tmo)
+</pre>
+
+
+    <ul>
+
+        <li>ctx: AIO 上下文
+
+        <li>min_nr: 是少等待的 请求数.
+
+        <li>nr: 最多等待的请求数.
+
+        <li>events: 保存 event 的数组.
+
+        <li>tmo: 设置超时.
+    </ul></p>
+
+<p>events 用于取出的完成的 aio 事件, io_event 的data 来自于 iocb 中的 aio_data.
+从而可以与创建 aio 的上下文关联起来.</p>
+
+<h3>总结</h3>
+<p>aio 与 epoll 通过 eventfd 进行关联, 但是 eventfd 并不能返回某一个具体的 aio 事件, 只能返回
+完成的 aio 事件的数量.</p>
+
+<p>在收到完成通知的情况下, 通过 io_getevents 得到具体的 aio 事件的 data 数据, 从而与 submit 的上下文关联.</p>

@@ -1,0 +1,99 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Title: ATS - 自定义日志域
+%Class: ats
+%Post:1
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+\startitemize
+
+\item \{HTTP header field name\}cqh:
+打印客户请求头域. 比如: \bold{\%<\{Accept-Language\}cqh>} 会打印出 \bold{Accept-Language:} 请求头.
+\item \{HTTP header field name\}pqh: 打印代理的请求头域.
+\item \{HTTP header field name\}psh: 打印代理的响应的头域.
+\item \{HTTP header field name\}ssh: 打印服务器响应的头域.
+\item \{HTTP header field name\}cssh: 打印缓存响应的头域.
+\item caun: 客户端身份验证的用户名, RFC931/识别查找客户的用户名。
+\item cfsc:客户端完成状态代码;取决于客户端到 ATS 的请求是否成功完成(FIN)或中断(INTR)。
+\item  chi: 客户端的主机的IP地址
+\item  chih: 十六进制客户端的主机的IP地址
+\item  hii: 这是连接的ip 地址, 也就是客户端的连接ip
+\item hiih: 十六进制连接的ip 地址
+\item chp: 客户端端口
+\item cqbl: 客户端请求的body 长度
+\item cqhl: 客户端请求的头长度
+\item cqhm: 客户端请求方法
+\item cqhv: 客户端请求HTTP版本
+\item cqtd: 客户端请求时间戳. 以yyyy-mm-dd 的格式输出请求的时间.
+\item cqtn:  Netscape timestamp 格式 输出请求的时间
+\item cqtq: 以毫秒输出客户端请求时间戳
+\item cqts:  Squid format 请求时间戳.
+\item cqtt: 客户端请求时间戳. 输出为 hh:mm:ss, 比如: 16:01:19
+\item cqtr: tcp 重用状态, 指出是否使用一个已有的tcp 连接.
+\item cqssl: 表明客户请求连接是不是基于 SSL.
+\item cqssr:SSL session/ticket  的重用状态
+\item cqssv: ssl 的 SSL/TLS 版本.
+\item cqssc: ATS 的与客户端会话使用的 cipher
+\item cqtx: 用户的HTTP请求行.
+\starttyping
+GET http://www.company.com HTTP/1.0
+\stoptyping
+在 代理模式下, ATS 会打印 重写/map 后的URL.
+
+\item cqu: 请求的 URL
+\item cquc: 请求的 URL, 不同于 \bold{cqu}, 对于空白和一些不能传递给统计工具的特殊字符进行编码.
+\item cqup: 请求的路径; 包括参数部分.
+\item cqus: 请求的URL 方案.
+\item cquuc: 没有被 remap  的URL
+\item cquup: 没有被remap 的URL path.
+\item cquuh:  没有被remap 的 URL host.
+\item cluc: 针对于用户请求, 用于查找的缓存 URL 或 cache key.
+\item crat: 在源站有指定的情况下的重试间隔时间(秒)
+\item crc: 缓存的状态码, 显示缓存是如何响应请求的(\bold{HIT}, \bold{MISS}).
+\item chm: 缓存命中状态. 指出缓存是由那哪一级进行输出的. 比如是一个 RAM 缓存还是一个 磁盘缓存. 以后可能会支持更多的选项,
+但是目前只支持\bold{HIT_RAM} 和 \bold{HIT_DISK}.
+\item csscl: 缓存的从源站响应长度
+\item csshl: 缓存的从源站响应头的长度.
+\item csshv: 缓存的响应 HTTP 版本(1.0, 1.1 ..)
+\item csssc: 从源站缓存的 HTTP 响应状态码.
+\item cwr: 缓存的写入结果: (-, WL_MISS, INTR, ERR or FIN)
+\item cwtr: 转换后的缓存写入结果
+\item fsiz: The size of the file (n bytes) as seen by the origin server.
+\item \{Milestone field name\}ms: 请求中的一个阶段的时间. 可以通过\bold{TSHttpTxnMilestoneGet()}
+得到所有阶段的名字.
+\item \{Milestone field name1-Milestone field name2\}msdms: 两个阶段的时间差.
+\item pfsc: 代理结束的状态码.  指出 ATS 到源站的请求状态(\bold{FIN}, \bold{INTR}, \bold{TIMEOUT}).
+\item phn: 生成日志条目的ATS 主机名。
+\item phi: 生成日志条目的 ATS IP.
+\item phr: 代理层级路线; ATS 用于取回资源的路由
+\item php: ATS 服务端口
+\item piid:
+The plugin ID for the transaction. This is set for plugin driven transactions via \bold{TSHttpConnectWithPluginId()}.
+\item pitag:
+The plugin tag for the transaction. This is set for plugin driven transactions via \bold{TSHttpConnectWithPluginId()}.
+\item pqbl: 代理到源站的请求body 长度.
+\item phhl: 代理到源站的请求头长度.
+\item pqsi: 请求的代理服务器 IP
+\item pqsn: 代理请求的服务器名.
+\item pscl: ATS 响应到客户端的长度.
+\item psct: 由于响应头指定的文件类型, 比如\bold{img/gif}.
+\item pshl: ATS 响应头的长度.
+\item psql: Squid 格式的响应长度
+\item pssc: ATS 给客户端响应的状态码.
+\item shi:  通过DNS 查找得到的 IP 地址. The IP address resolved from the DNS name lookup of the host in the request. For hosts with multiple IP addresses, this field records the IP address resolved from that particular DNS lookup.
+This can be misleading for cached documents. For example: if the first request was a cache miss and came from IP1 for server S and the second request for server S resolved to IP2 but came from the cache, then the log entry for the second request will show IP2.
+\item shn: 源站的 hostname.
+\item sscl: 从源站到ATS 响应长度
+\item sshl: 源站到 ATS 的响应头长度.
+\item sshv: 服务响应的 HTTP 版本.(1.0, 1.1, ... )
+\item sssc: 从源站到 ATS 的响应状态码.
+\item stms:  到源站的花费的时间(毫秒); 这个时间是指从连接建立到连接关闭的时间.
+\item stmsh: 类似于 stms, 只是是十六进制
+\item stmsf: 与 stms 相似, 只是以秒为单位的浮点数. stms 为1500, stmsf 为 1.5
+\item sts:  与 stms 相似, 只是以秒为单位的整数. stms 为1500, sts 为 1
+\item ttms:  处理客户端请求的用时(毫秒). 从客户端与ATS 建立连接, 到 ATS 发送最后一个响应的字节
+给用户.
+\item ttmsh: ttmsh 的十六进制
+\item ttmsf: 以秒为单位的浮点数.
+\item tts:   以秒为单位的int.
+\stopitemize

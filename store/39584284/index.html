@@ -1,0 +1,44 @@
+<p></p>
+
+<h3>qdisc</h3>
+<p>删除根队列控制
+<pre>
+tc qdisc del dev lo root
+</pre>
+</p>
+
+<p>使用分类算法 PRIO 创建一个队列控制的根:
+<pre>
+tc qdisc add dev lo root handle 1: prio
+</pre>
+
+这个命令会默认创建3个类.</p>
+
+<p>使用分类算法 PRIO 创建一个队列控制的根, 并产后四个类:
+<pre>
+tc qdisc add dev lo root handle 1: prio  bands 4
+</pre>
+
+默认的情况, 第四个类用不到.</p>
+
+<p>在一个子 class 下增加一个 tbf 队列控制.
+<pre>
+tc qdisc add dev lo parent 1:4 handle 20: tbf rate 2Mbit buffer 1600 limit 3000
+</pre>
+</p>
+
+<p>增加延时100ms, 并在 10ms 内进行波动, 概率是 10%
+<pre>
+tc qd add dev lo parent 1:1 handle 20: netem delay 100ms 10ms 10%
+</pre>
+</p>
+
+<h3>class</h3>
+<p></p>
+
+<h3>filter</h3>
+<p>给 root qdisc 添加一个 filter, 把从指定端口出来的包送到第四个类:
+<pre>
+tc filter add dev lo protocol ip parent 1:0 prio 4 u32  match ip sport 80 0xffff flowid 1:4
+</pre>
+</p>

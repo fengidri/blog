@@ -1,0 +1,49 @@
+<p>在linux下，我们可以使用ethtool工具查询网卡是否支持这些特性（以网卡eth0为例）：</p>
+
+<p><pre>
+$ ethtool -k eth0
+</pre>
+
+而我们要关闭某一个特性时，只需要输入（以关闭gso为例）：</p>
+
+<p><pre>
+$ ethtool -K eth0 gso off
+</pre>
+
+上面的命令只能暂时关闭网卡的特性，当重启之后网卡又会启用该特性，为了避免这种情况，
+我们只需要将上面的命令保存到网卡的配置文件里面即可，对于我的CentOS 6.5来讲，对应于eth0的配置文件在</p>
+
+<p><pre>
+/etc/sysconfig/network-scripts/ifcfg-eth0
+</pre>
+</p>
+
+<h3>TSO</h3>
+<p>TSO(TCP offload engine} 还有一些其它的技术都是在网卡上完成一些工作以减小 CPU 的压力.
+这些功能对于速度的影响并不大, 因为工作都没有少, 只是一些工作转移到了网卡上, 从而减小了 CPU 的压力.</p>
+
+<p>tcp协议的一些处理下放到网卡完成以减轻协议栈处理占用CPU的负载。
+通常以太网的MTU是1500Bytes，除去IP头（标准情况下20Bytes）、TCP头（标准情况下20Bytes），
+TCP的MSS (Max Segment Size)大小是1460Bytes。
+当应用层下发的数据超过了mss时，协议栈会对这样的payload进行分片，
+保证生成的报文长度不超过MTU的大小。但是对于支持TSO/GSO的网卡而言，就没这个必要了，
+可以把最多64K大小的payload直接往下传给协议栈，此时IP层也不会进行分片，一直会传给网卡驱动，
+支持TSO/GSO的网卡会自己生成TCP/IP包头和帧头，这样可以offload很多协议栈上的内存操作，
+checksum计算等原本靠CPU来做的工作都移给了网卡。</p>
+
+<h3>GRO（generic-receive-offload）/ LRO（large-receive-offload）</h3>
+<p>LRO通过将接收到的多个TCP数据聚合成一个大的数据包，然后传递给网络协议栈处理，
+以减少上层协议栈处理 开销，提高系统接收TCP数据包的能力。</p>
+
+<p>而GRO的基本思想跟LRO类似，克服了LRO的一些缺点，更通用。后续的驱动都使用GRO的接口，而不是LRO。</p>
+
+<p>具体到工作中遇到的那个问题中，我们在关闭了网卡的GSO/TSO功能后，还是能收到大包，
+这里面实际上还有LRO/GRO的“功劳”在里面，将它们也关闭后，
+对端协议栈发送什么样的数据包，本端就收到了什么样的数据包了。</p>
+
+<h3>问题</h3>
+<p>在一些情况下, 也可能会引发问题, 比较 TCP 层使用了 TSO 把数据放到了下面去处理, 但是一些自己写的模块
+比如 net filter 可能在不注意的时候把 TSO 信息丢失了, 从而使得发出的数据包过大.</p>
+
+<h3>参考</h3>
+<p>&nbsp;<a href=http://dog250.blog.51cto.com/2466061/1671875 >http://dog250.blog.51cto.com/2466061/1671875</a>&nbsp;&nbsp;<a href=http://seitran.com/2015/04/13/01-gso-gro-lro/ >http://seitran.com/2015/04/13/01-gso-gro-lro/</a>&nbsp;</p>

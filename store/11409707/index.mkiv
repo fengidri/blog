@@ -1,0 +1,121 @@
+%Title: io调度noop 源码分析
+%Class: kernel
+%Post:1
+
+
+\section{noop}
+noop是linux一个基本的io调度器.
+
+源代码位置在 block/noop-iosched.c
+
+先来看看这个模块的基本信息.
+\starttyping
+MODULE_AUTHOR("Jens Axboe");
+MODULE_LICENSE("GPL");
+MODULE_DESCRIPTION("No-op IO scheduler");
+\stoptyping
+
+\section{模块}
+noop 模块是一个基于elevator 的内核模块.
+基本的内核模块就不多说了, 来看看elevator 的模块结构.
+\starttyping
+static int __init noop_init(void)
+{
+	elv_register(&elevator_noop);
+
+	return 0;
+}
+
+static void __exit noop_exit(void)
+{
+	elv_unregister(&elevator_noop);
+}
+\stoptyping
+从这里可以看到, elevator 模块是通过elevator_noop这个数据结构来向
+elevator 进行注册的. 那我们有必要先了解这数据结构.
+
+代码里这个结构的初始化如下:
+\starttyping
+static struct elevator_type elevator_noop = {
+	.ops = {
+		.elevator_merge_req_fn   = noop_merged_requests,
+		.elevator_dispatch_fn    = noop_dispatch,
+		.elevator_add_req_fn     = noop_add_request,
+		.elevator_queue_empty_fn = noop_queue_empty,
+		.elevator_former_req_fn  = noop_former_request,
+		.elevator_latter_req_fn  = noop_latter_request,
+		.elevator_init_fn        = noop_init_queue,
+		.elevator_exit_fn        = noop_exit_queue,
+	},
+	.elevator_name = "noop",
+	.elevator_owner = THIS_MODULE,
+};
+\stoptyping
+这里面的几个结构的意义如下:
+
+\startitemize
+\item {elevator_merge_fn} \par
+查询一个request，用于将bio并入
+
+\item {elevator_merge_req_fn}\par
+将两个合并后的请求中多余的那个给删除
+
+\item {elevator_dispatch_fn}\par
+将调度器的队列最前面的元素取出，分派给request_queue中的请求队列以等候响应.
+
+\item {elevator_add_req_fn}\par
+将一个新的request添加进调度器的队列
+
+\item {elevator_queue_empty_fn}\par
+检查调度器的队列是否为空
+
+\item {elevator_set_req_fn, elevator_put_req_fn}\par
+分别在创建新请求和将请求所占的空间释放到内存时调用
+
+\item {elevator_former_req_fn}\par
+在noop调度器链表中，获取指定请求的前一个请求
+
+\item {elevator_latter_req_fn}\par
+在noop调度器链表中，获取指定请求的后一个请求
+
+\item {elevator_init_fn}\par
+用于初始化调度器实例. 返回的数据返回给上层, 被上层的
+\bold{struct elevator_queue} 结构的\bold{elevator_data} 成员.
+
+\item{elevator_exit_fn}\par
+会对于elevator_init_fn初始化的数据进行释放.
+
+\stopitemize
+
+
+
+
+可以看到其数据结构:
+\starttyping
+struct noop_data {
+	struct list_head queue;
+};
+\stoptyping
+其实noop 维护一个fifo. 当io请求过来, 就会加入到链表的后面.
+
+理解了这些就ok了, noop很简单啦.
+
+\section{分析}
+这个东西很简单. 没有什么优化.
+
+\subsection{没对请求IO 进行排序}
+如果队列中，先要求访问0扇区，后又要求访问最后一个扇区，马上又迂回到2扇区，机械硬盘的磁头只能疯跑了。
+
+但是，没有机械结构的存储器（SSD，u盘，sd卡，内存等等）这回就牛了：随你怎么跳。所以说noop适合这些没机械结构的器件。
+
+\subsection{没有参与调度}
+没有进行调度对于请求的优先级没有区分处理这样是很不好的.
+
+
+
+
+
+\section{参考}
+\goto{io调度器noop与deadline源码级分析}
+{http://tieba.baidu.com/p/2767146878}
+

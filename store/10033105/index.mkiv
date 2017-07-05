@@ -1,0 +1,222 @@
+%Title: nginx http proxy 详细分析
+%Class: nginx
+%Post:1
+这个文章是在对于nginx的一些细节还没有太熟悉的情况下进行的分析. 所以
+分析中会加入很多对于细节的理解与分析.
+
+那为什么选择http proxy 这个模块呢? 因为这个模块在目前的工作中用的比较多.
+它是upstream的模块. 在分析中如果与upstream有关, 可能会简单说明一下.
+
+\section{模块的自述}
+这个是一个模块中最为重要的结构了, 它是当前模块的自述.
+在分析这个结构的时候, 我们并不用知道当前的模块的行为, 要从nginx主程序的
+角度来分析这个结构.
+
+详细的结构
+比较复杂, 对于理解nginx并没有太大的意义, 这里说明一下http proxy 中出现的
+数据.
+
+
+\startitemize
+\item  NGX_MODULE_V1 是一个宏用于初始化结构的前面的数据.
+\item  ctx 是模块的上下文, 每一个种类的模块结构不同.
+\item  commands 自述本模块的命令
+\item  type 模块的种类. (core/event/http/mail中的一种)
+\stopitemize
+
+下面就是模块级别的回调函数了. 以及一些必要的初始化.
+
+有必然说明一下这里的模块种类的问题, 我一直不是太明白. 从nginx 全局的角度来
+说这个问题的话, 其实nginx的模块只有上面所说的四种了.
+
+对于模块的加载, 主程序首先加载core类的, event/http/mail 分别是由各个core
+进行加载的.
+
+网上常说的四种或五种的说法其实是针对于http 类的模块的, 这些模块可以大体
+依据处理阶段与功能进行划分.
+
+http core 依据于type 对于所有的http 模块进行处理. 这一类的模块的ctx的类型
+是约定好的.
+
+http 模块的ctx 是ngx_http_module_t. 中定义了一些回调函数.
+
+
+这个模块的使用是由用户的配置命令proxy_pass触发的.
+
+
+
+\section{proxy_pass}
+ngx_http_proxy_pass 是命令proxy_pass 的回调.
+
+这个函数中做了三件事情:
+\startitemize
+\item  设置本localtion的handler为ngx_http_proxy_handler.
+\item  分析 参数url.
+\item  把url设置到upstream中.
+\stopitemize
+
+那么当处理这个localtion时自然会调用到这个handler.
+这个handler的实现很大程度上是依赖于upstream实现的.
+
+\startitemize
+
+
+
+\item 创建upstream数据结构。
+\starttyping
+if (ngx_http_upstream_create(r) != NGX_OK) {
+    return NGX_HTTP_INTERNAL_SERVER_ERROR;
+}
+\stoptyping
+
+\item 设置模块的tag和schema。schema现在只会用于日志，tag会用于buf_chain管理。
+\starttyping
+    u = r->upstream;
+
+    if (plcf->proxy_lengths == NULL) {
+        ctx->vars = plcf->vars;
+        u->schema = plcf->vars.schema;
+#if (NGX_HTTP_SSL)
+        u->ssl = (plcf->upstream.ssl != NULL);
+#endif
+
+    } else {
+        if (ngx_http_proxy_eval(r, ctx, plcf) != NGX_OK) {
+            return NGX_HTTP_INTERNAL_SERVER_ERROR;
+        }
+    }
+
+    u->output.tag = (ngx_buf_tag_t) &ngx_http_proxy_module;
+\stoptyping
+
+
+
+\item 设置upstream的后端服务器列表数据结构。
+\starttyping
+    u->conf = &plcf->upstream;
+\stoptyping
+
+\item 设置upstream回调函数。
+\starttyping
+    u->create_request = ngx_http_proxy_create_request;
+    u->reinit_request = ngx_http_proxy_reinit_request;
+    u->process_header = ngx_http_proxy_process_status_line;
+    u->abort_request = ngx_http_proxy_abort_request;
+    u->finalize_request = ngx_http_proxy_finalize_request;
+    u->input_filter_init = ngx_http_proxy_input_filter_init;
+    u->input_filter = ngx_http_proxy_non_buffered_copy_filter;
+\stoptyping
+
+\item 创建并设置upstream环境数据结构。
+\starttyping
+    ctx = ngx_pcalloc(r->pool, sizeof(ngx_http_proxy_ctx_t));
+    if (ctx == NULL) {
+        return NGX_ERROR;
+    }
+
+    ngx_http_set_ctx(r, ctx, ngx_http_proxy_module);
+\stoptyping
+
+
+
+\item 完成upstream初始化并进行收尾工作。
+
+\starttyping
+    rc = ngx_http_read_client_request_body(r, ngx_http_upstream_init);
+\stoptyping
+在这个函数中完成以下工作:
+\starttyping
+r->main->count++;
+ngx_http_upstream_init(r);
+\stoptyping
+\stopitemize
+
+将count加1，nginx遇到这种情况，虽然会认为当前请求的处理已经结束，
+但是不会释放请求使用的内存资源，也不会关闭与客户端的连接。
+之所以需要这样，是因为nginx建立了upstream请求和客户端请求之间一对一的关系，
+在后续使用ngx_event_pipe将upstream响应发送回客户端时，
+还要使用到这些保存着客户端信息的数据结构。
+
+这里在处理相关信息之后, 通过ngx_http_upstream_init把所有的业务请求交给了
+upstream. 可以看出来, upstream 就如同一个库一样提供相应的处理方法.
+这是就不继续对于upstream 进行分析. 我们还是在http proxy 中进行分析.
+下面就先分析那些加调处理函数.
+
+
+
+\section{回调函数}
+
+\subsection{create_request }
+生成发送到后端服务器的请求缓冲（缓冲链），在初始化upstream 时使用。
+不同的后端的协议是不同的. 那么upstream 就不能负责组装向后端发送的
+请求. 这个只能由各个模块自己负责.
+
+这里是http proxy其实就是组织http请求头.
+
+ngx_http_proxy_create_request 函数首先计算所用的buf的长度.
+然后复制method, url, version, 组装headers, 插入r, n, 生成
+body chain link.
+
+
+
+\subsection{reinit_request }
+在某台后端服务器出错的情况，nginx会尝试另一台后端服务器。 nginx选定新的服务器以后，会先调用此函数，以重新初始化 upstream模块的工作状态，然后再次进行upstream连接。
+
+此回调中没有做太多的事情, 只是对一些值进行重新赋值.
+\subsection{process_header }
+处理后端服务器返回的信息头部。所谓头部是与upstream server 通信的协议规定的，比如HTTP协议的header部分，或者memcached 协议的响应状态部分。
+
+由于是http proxy 返回的也是http协议, 所以要处理的也是http协议, 而对于
+http协议的处理nginx 中有的是丰富的接口.
+
+首先明白一个问题, 对于网络数据包的处理, 有一个问题, 就是当前收到的数据可能并
+不全, 再读一些数据再进行分析, nginx中的处理方法就是处理的paser返回NGX_AGAIN,
+然后对应的处理方法会再次调用.
+
+process_header 本来是处理header的, 但是在初始化的时候, 回调函数是:
+ngx_http_proxy_process_status_line. 这个函数要处理的是状态行.
+在处理完成状态行之后, 函数并不会返回OK, 而是把process_header再赋值为
+ngx_http_proxy_process_header, 并立即调用这个函数进行处理, 返回处理之后的
+返回值. 这样的设计还是很有意思的, 嘿嘿!
+
+ngx_http_proxy_process_header 就是处理收到的header line.
+
+\subsection{abort_request }
+在客户端放弃请求时被调用。
+不需要在函数中实现关闭后端服务 器连接的功能，
+系统会自动完成关闭连接的步骤，所以一般此函 数不会进行任何具体工作。
+
+http proxy 中只是加一行日志.
+
+\subsection{finalize_request }
+正常完成与后端服务器的请求后调用该函数，与abort_request 相同，
+一般也不会进行任何具体工作。
+
+http proxy 中只是加一行日志.
+
+
+
+
+\subsection{input_filter_init }
+初始化input filter的上下文。nginx默认的input_filter_init 直接返回。
+
+但是http的处理上就比较复杂了. 比如如果upstream 返回的是chunked,
+那么input_filter 回调就修改为ngx_http_proxy_non_buffered_chunked_filter.
+\subsection{input_filter }
+
+处理后端服务器返回的响应正文。
+nginx默认的input_filter会 将收到的内容封装成为缓冲区链ngx_chain。
+该链由upstream的 out_bufs指针域定位，
+所以开发人员可以在模块以外通过该指针 得到后端服务器返回的正文数据。
+
+
+http proxy 提供有两个input_filter回调函数.
+默认的是ngx_http_proxy_non_buffered_copy_filter.
+在input_filter_init 中如果检测到upstream 是chunked, 就使用另一个回调函数
+ngx_http_proxy_non_buffered_chunked_filter
+
+这两个函数的结构很容易理解.
+
+\section{参数设置}
+http proxy 有大量的参数可以进行设置. 除去上面提到的所有的参与流程的函数之外,
+其它的函数大主要是用于处理用户的参数设置.

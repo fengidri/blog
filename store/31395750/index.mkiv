@@ -1,0 +1,58 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Title: zsh complete
+%Class: linux
+%Post:1
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+之前编写 zsh 补全脚本. 修改 fpath 总是不成功, 今天才明白, zsh 对于补全要在 zshrc 里进行
+初始化, 方法是:
+\starttyping
+autoload -U compinit
+compinit
+\stoptyping
+
+说明:
+\starttyping
+To initialize the system, the function compinit should be in a directory mentioned in the fpath parameter,
+and should be autoloaded ('autoload -U compinit' is recommended), and then run simply as 'compinit'.
+\stoptyping
+
+所以 fpath 的修改要放在 compinit 之前, 所以 .zshrc 的修改如下:
+\starttyping
+fpath=($HOME/.zsh/completion $fpath)
+autoload -U compinit
+compinit
+\stoptyping
+
+
+
+
+之后再把自定义的脚本放到 .zsh/completion 里.
+
+如果对于命令 upquery 编写补全脚本, 应在目录下增加 \bold{_upqeury} 文件. 内容如下:
+\starttyping
+#compdef upquery
+_upquery() {
+    local -a commands
+    commands=(
+    'metadata:lookup metadata'
+    'source:lookup url source'
+    'elasticsearch:query elasticsearch'
+    'purge-record:show purge record'
+    'add-to-purge:add url to purge tasks'
+    )
+
+    if (( CURRENT == 2 )); then
+        _describe -t commands 'commands' commands
+    fi
+
+    return 0
+}
+
+_upquery "#@"
+\stoptyping
+第一行调用 compdef 指定要补全的命令, 可以是多个命令:
+\starttyping
+#compdef upquery squery query
+\stoptyping
+

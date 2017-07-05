@@ -1,0 +1,226 @@
+<p></p>
+
+<h3>前言</h3>
+<p>说明一些 tcp_sock 的成员的意义:
+
+    <ul>
+
+        <li>snd_una: 第一个希望收到的确认序号.
+
+        <li>snd_nxt: 下一个要发送的第一个数据
+
+        <li>rcv_wup: 第一个还没有发送的 ack 确认数据
+
+        <li>rec_nxt: 下一个要接收的数据
+    </ul></p>
+
+<h3>tcp_ack</h3>
+<p><pre>
+/* This routine deals with incoming acks, but not outgoing ones. */
+static int tcp_ack(struct sock *sk, struct sk_buff *skb, int flag)
+{
+         struct inet_connection_sock *icsk = inet_csk(sk);   // 获得连接sock
+         struct tcp_sock *tp = tcp_sk(sk);   // 获得tcp_sock
+         u32 prior_snd_una = tp-&gt;snd_una;    // 获得未发送确认的序号
+         u32 ack_seq = TCP_SKB_CB(skb)-&gt;seq; // 获得数据序号
+         u32 ack = TCP_SKB_CB(skb)-&gt;ack_seq; // 获得ack序号(用于确认的序号)
+         u32 prior_in_flight;
+         u32 prior_fackets;
+         int prior_packets;
+         int frto_cwnd = 0;
+
+         /* If the ack is newer than sent or older than previous acks
+          * then we can probably ignore it.
+          */
+         if (after(ack, tp-&gt;snd_nxt))    // 如果确认序号比我还下一个准备发送的序号还要大，即确认了我们尚未发送的数据，那么显然不合理
+                 goto uninteresting_ack; // 没有意义的ACK
+
+         if (before(ack, prior_snd_una)) // 如果ack确认比我期望的确认序号小，那么可能是以前老的ack，丢弃！！！
+                 goto old_ack;           // 老的ack
+
+         if (after(ack, prior_snd_una))  // 如果ack确认比我期望的第一个ack要大，但是经过上面我们还知道没有超过我没有发送的数据序号，范围
+                 flag |= FLAG_SND_UNA_ADVANCED;  // 那么设置标识~
+
+         if (sysctl_tcp_abc) { // 是否设置了tcp_abc，若有则我们不需要对每个ack确认都要拥塞避免，所以我们需要计算已经ack(确认)的字节数。
+                 if (icsk-&gt;icsk_ca_state &lt; TCP_CA_CWR)
+                         tp-&gt;bytes_acked += ack - prior_snd_una;  // 已经(确定)ack的字节数增大了( ack - prior_snd_una )大小
+                 else if (icsk-&gt;icsk_ca_state == TCP_CA_Loss)
+                         /* we assume just one segment left network */
+                         tp-&gt;bytes_acked += min(ack - prior_snd_una,
+                                                tp-&gt;mss_cache);
+         }
+
+         prior_fackets = tp-&gt;fackets_out;              // 得到fack的数据包的字节数
+         prior_in_flight = tcp_packets_in_flight(tp);  // 计算还在传输的数据段的字节数，下面会说手这个函数！（ 1 ）
+
+         if (!(flag &amp; FLAG_SLOWPATH) &amp;&amp; after(ack, prior_snd_una)) { // 如果不是“慢路径” &amp;&amp; ack确认比其需要的第一个大(正确的确认序号)
+                 /* Window is constant, pure forward advance.
+                  * No more checks are required.
+                  * Note, we use the fact that SND.UNA&gt;=SND.WL2.
+                  */
+                 tcp_update_wl(tp, ack, ack_seq);   // 需要更新sock中的snd_wl1字段：tp-&gt;snd_wl1 = ack_seq;( 记录造成发送窗口更新的第一个数据 )
+                 tp-&gt;snd_una = ack;                 // snd_una更新为已经确认的序列号！下一次期待从这里开始的确认！！！
+                 flag |= FLAG_WIN_UPDATE;           // 窗口更新标识
+
+                 tcp_ca_event(sk, CA_EVENT_FAST_ACK);  // 重要函数！！！进入拥塞操作！这个函数最后看，这里处理的是“正常的ACK”事件（999999）
+
+                 NET_INC_STATS_BH(LINUX_MIB_TCPHPACKS);
+         } else {
+                 if (ack_seq != TCP_SKB_CB(skb)-&gt;end_seq) // 如果不相等，那么说明还是带有数据一起的~不仅仅是一个ACK的包
+                         flag |= FLAG_DATA;   // 说明还是有数据的~
+                 else
+                         NET_INC_STATS_BH(LINUX_MIB_TCPPUREACKS); // 否则仅仅是ACK的包
+
+                 flag |= tcp_ack_update_window(sk, skb, ack, ack_seq);  // 下面需要更新发送窗口~（2）
+
+                 if (TCP_SKB_CB(skb)-&gt;sacked)  // 然后判断是否有sack段，有的话，我们进入sack段的处理。
+                         flag |= tcp_sacktag_write_queue(sk, skb, prior_snd_una); // ~~~~~处理SACK(选择确认)，以后单独解释
+
+                 if (TCP_ECN_rcv_ecn_echo(tp, tcp_hdr(skb))) // 判断是否有ecn标记，如果有的话，设置ecn标记。
+                         flag |= FLAG_ECE;                   // ECE 也是用于判断是否阻塞情况
+
+                 tcp_ca_event(sk, CA_EVENT_SLOW_ACK); // 重要函数！！！进入拥塞操作！这个函数最后看，这里处理“其他ACK”事件（999999）
+         }
+
+         /* We passed data and got it acked, remove any soft error
+          * log. Something worked...
+          */
+         sk-&gt;sk_err_soft = 0;
+         tp-&gt;rcv_tstamp = tcp_time_stamp;
+         prior_packets = tp-&gt;packets_out;  // 获得发出去没有收到确认的包数量
+         if (!prior_packets) // 如果为0，则可能是0窗口探测包
+                 goto no_queue;
+
+         /* See if we can take anything off of the retransmit queue. */
+         flag |= tcp_clean_rtx_queue(sk, prior_fackets);  // 清理重传队列中的已经确认的数据段。（3）
+
+         if (tp-&gt;frto_counter)  // 处理F-RTO （4）
+                 frto_cwnd = tcp_process_frto(sk, flag);   // 处理超时重传，暂时先不多说
+         /* Guarantee sacktag reordering detection against wrap-arounds */
+         if (before(tp-&gt;frto_highmark, tp-&gt;snd_una))
+                 tp-&gt;frto_highmark = 0;
+
+         if (tcp_ack_is_dubious(sk, flag)) {     // 判断ack是否可疑，其实本质就是判断可不可以增大拥塞窗口，下面会有详细解释（5）
+                 /* Advance CWND, if state allows this. */
+                 if ((flag &amp; FLAG_DATA_ACKED) &amp;&amp; !frto_cwnd &amp;&amp; // 如果是数据确认包
+                     tcp_may_raise_cwnd(sk, flag))  // 检测flag以及是否需要update拥塞窗口的大小！！！（6）---&gt;被怀疑也有可能增大窗口哦~~~
+                         tcp_cong_avoid(sk, ack, prior_in_flight);   // 为真则更新拥塞窗口,拥塞避免算法（7）---&gt;如果允许增大窗口，那么拥塞算法处理窗口
+                 tcp_fastretrans_alert(sk, prior_packets - tp-&gt;packets_out, // 这里进入拥塞状态的处理，非常重要的函数(对于拥塞处理来说)！！！（8）
+                                       flag);   // 处理完窗口变化之后，进入快速重传处理！！！
+         } else {  // 没有被怀疑(说明是正常的确认ACK)
+                 if ((flag &amp; FLAG_DATA_ACKED) &amp;&amp; !frto_cwnd)
+                         tcp_cong_avoid(sk, ack, prior_in_flight);  // 如果没有被怀疑，直接拥塞算法处理窗口变化
+         }
+
+         if ((flag &amp; FLAG_FORWARD_PROGRESS) || !(flag &amp; FLAG_NOT_DUP))
+                 dst_confirm(sk-&gt;sk_dst_cache);
+
+         return 1;
+
+no_queue:
+         icsk-&gt;icsk_probes_out = 0;
+
+         /* If this ack opens up a zero window, clear backoff.  It was
+          * being used to time the probes, and is probably far higher than
+          * it needs to be for normal retransmission.
+          */
+         if (tcp_send_head(sk)) // 这里判断发送缓冲区是否为空，如果不为空，则进入判断需要重启keepalive定时器还是关闭定时器
+                 tcp_ack_probe(sk);   // 处理定时器函数~（暂时不看）
+         return 1;
+
+old_ack:
+         if (TCP_SKB_CB(skb)-&gt;sacked) // 如果有sack标识
+                 tcp_sacktag_write_queue(sk, skb, prior_snd_una); // 进入sack段处理（暂时不看）
+
+uninteresting_ack:
+         SOCK_DEBUG(sk, "Ack %u out of %u:%u\n", ack, tp-&gt;snd_una, tp-&gt;snd_nxt);// 没有意义的包~
+         return 0;
+}
+</pre>
+</p>
+
+<h3>tcp_ack_update_window</h3>
+<p><pre>
+static int tcp_ack_update_window(struct sock *sk, struct sk_buff *skb, u32 ack,
+                                  u32 ack_seq)
+{
+         struct tcp_sock *tp = tcp_sk(sk);             // 获得tcp_sock
+         int flag = 0;
+         u32 nwin = ntohs(tcp_hdr(skb)-&gt;window);       // 获得skb发送方的可以接收的窗口值
+
+         if (likely(!tcp_hdr(skb)-&gt;syn))               // 如果不是建立连接时候，即是普通传递数据时候，窗口缩放
+                 nwin &lt;&lt;= tp-&gt;rx_opt.snd_wscale;       // 接收方要求对窗口进行缩放
+         // 下面正式更新窗口
+         if (tcp_may_update_window(tp, ack, ack_seq, nwin)) { // 可能需要更新窗口大小，在函数tcp_may_update_window中实际处理（1）
+                 flag |= FLAG_WIN_UPDATE;                     // 窗口更新成功
+                 tcp_update_wl(tp, ack, ack_seq);       // 更新snd_wl1
+
+                 if (tp-&gt;snd_wnd != nwin) {  // 如果发送窗口！=缩放后的新窗口（注意skb发送方的接收窗口和本tp的发送窗口应该一致）
+                         tp-&gt;snd_wnd = nwin; // 改变窗口值
+
+                         /* Note, it is the only place, where
+                          * fast path is recovered for sending TCP.
+                          */
+                         tp-&gt;pred_flags = 0;
+                         tcp_fast_path_check(sk);  // 检验是否能够开启“快速路径”（2）看下面
+
+                         if (nwin &gt; tp-&gt;max_window) {   // 如果调整之后的窗口大于从对方接收到的最大的窗口值
+                                 tp-&gt;max_window = nwin; // 调整为小的
+                                 tcp_sync_mss(sk, inet_csk(sk)-&gt;icsk_pmtu_cookie); // 改变mss_cache
+                         }
+                 }
+         }
+
+         tp-&gt;snd_una = ack;    // 下一个第一个需要确认就是所有当前已经确认序号之后~~~~
+
+         return flag;
+}
+</pre>
+</p>
+
+<p><pre>
+/* Check that window update is acceptable.
+ * The function assumes that snd_una&lt;=ack&lt;=snd_next.
+ */ // 这个函数是检查窗口是否可变，只要确认ack在snd_una~下一个需要发送的数据之间，就是需要改变窗口的！
+static inline int tcp_may_update_window(const struct tcp_sock *tp,
+                                         const u32 ack, const u32 ack_seq,
+                                         const u32 nwin)
+{
+         return (after(ack, tp-&gt;snd_una) ||                       // snd_una&lt;=ack
+                 after(ack_seq, tp-&gt;snd_wl1) ||                   // 看上面的窗口图可以知道
+                 (ack_seq == tp-&gt;snd_wl1 &amp;&amp; nwin &gt; tp-&gt;snd_wnd)); // 调整的新窗口大于原始发送窗口
+}
+
+</pre>
+
+看一下检测是否可以进入“快速路径”处理函数：tcp_fast_path_check
+<pre>
+
+static inline void tcp_fast_path_check(struct sock *sk)
+{
+         struct tcp_sock *tp = tcp_sk(sk);
+
+         if (skb_queue_empty(&amp;tp-&gt;out_of_order_queue) &amp;&amp;
+            tp-&gt;rcv_wnd &amp;&amp;
+            atomic_read(&amp;sk-&gt;sk_rmem_alloc) &lt; sk-&gt;sk_rcvbuf &amp;&amp;
+             !tp-&gt;urg_data)
+                 tcp_fast_path_on(tp);
+}
+</pre>
+</p>
+
+<p>能够进入“快速路径”处理的基本条件是：
+
+    <ul>
+
+        <li>是否ofo(乱序包队列)队列为空，如果不为空也就是说有乱序数据不可以进入快速路径。
+
+        <li>当前的接收窗口是否大于0.，如果不是，不可以进入。
+
+        <li>当前的已经提交的数据包大小是否小于接收缓冲区的大小，能够放的下才可以进入快速路径。
+
+        <li>是否含有urgent 数据，不含有才可以进入快速路径。
+    </ul></p>
+
+<h3>参考</h3>
+<p>&nbsp;<a href=http://blog.csdn.net/shanshanpt/article/details/21798421 >http://blog.csdn.net/shanshanpt/article/details/21798421</a>&nbsp;</p>

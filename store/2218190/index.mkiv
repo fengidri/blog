@@ -1,0 +1,46 @@
+%title:快速排序
+\section{出身}
+快速排序（Quicksort）是对冒泡排序的一种改进。
+
+1962年 C. A. R. Hoare提出。
+
+\section{基本思想}
+通过一趟排序将要排序的数据分割成独立的两部分，
+其中一部分的所有数据都比另外一部分的所有数据都要小，
+然后再按此方法对这两部分数据分别进行快速排序，整个排序过程可以递归进行，
+以此达到整个数据变成有序序列。
+
+首先任意选取一个数据（通常选用数组的第一个数）作为关键数据，然后将所有比它小的数都放到它前面，所有比它大的数都放到它后面，这个过程称为一趟快速排序。
+
+\section{代码}
+\starttyping
+void QuickSort(int a[],int numsize)/*a是整形数组，numsize是元素个数*/
+{
+    int i=0,j=numsize-1;
+    int val=a[0];/*指定参考值val大小*/
+    if(numsize>1)/*确保数组长度至少为2，否则无需排序*/
+    {
+        while(i<j)/*循环结束条件*/
+        {
+            /*从后向前搜索比val小的元素，找到后填到a[i]中并跳出循环*/
+            for(;j>i;j--)
+                if(a[j]<val)
+                {
+                    a[i]=a[j];
+                    break;
+                }
+            /*从前往后搜索比val大的元素，找到后填到a[j]中并跳出循环*/
+            for(;i<j;i++)
+                if(a[i]>val)
+                {
+                    a[j]=a[i];
+                    break;
+                }
+        }
+        a[i]=val;/*将保存在val中的数放到a[i]中*/
+        QuickSort(a,i);/*递归，对前i个数排序*/
+        QuickSort(a+i+1,numsize-1-i);/*对i+1到numsize-1这numsize-1-i个数排序*/
+    }
+}
+\stoptyping
+

@@ -1,0 +1,76 @@
+<p>不同架构的CPU，寄存器名称被添以不同前缀以指示寄存器的大小。
+例如对于x86架构，字母“e”用作名称前缀，指示各寄存器大小为32位
+对于x86_64寄存器，字母“r”用作名称前缀，指示各寄存器大小为64位。</p>
+
+<p>X86-64有16个64位寄存器，分别是：
+%rax，%rbx，%rcx，%rdx，%esi，%edi，%rbp，%rsp，%r8，%r9，%r10，%r11，%r12，%r13，%r14，%r15。
+其中：</p>
+
+<p>
+    <ul>
+
+        <li>%rax 作为函数返回值使用。
+
+        <li>%rsp 栈指针寄存器，指向栈顶
+
+        <li>%rdi，%rsi，%rdx，%rcx，%r8，%r9 用作函数参数，依次对应第1参数，第2参数。。。
+
+        <li>%rbx，%rbp，%r12，%r13，%14，%15 用作数据存储，遵循被调用者使用规则，简单说就是随便用，
+ 调用子函数之前要备份它，以防他被修改
+
+        <li>%r10，%r11 用作数据存储，遵循调用者使用规则，简单说就是使用之前要先保存原值
+    </ul></p>
+
+<h3>函数的开始</h3>
+<p>在函数开始的时候,
+将调用函数的栈帧栈底地址入栈，即将bp寄存器的值压入调用栈中
+建立新的栈帧，将被调函数的栈帧栈底地址放入bp寄存器中
+<pre>
+push %rbp
+mov  %rsp, %rbp
+</pre>
+
+但是在 x86-64下这个就有一些不同了, 详情看参数文档.</p>
+
+<h3>函数的结尾</h3>
+<p>gcc 使用 ax 保存函数的返回值, 所以在函数结束的时候一般会出现如下的代码:
+<pre>
+0x0000000000400534 &lt;main+19&gt;:    b8 00 00 00 00    mov $0x0,%eax  // 保存返回值
+0x0000000000400539 &lt;main+24&gt;:     c9               leaveq
+0x000000000040053a &lt;main+25&gt;:     c3               retq
+</pre>
+</p>
+
+<h3>函数的调用</h3>
+<p>先要把参数传递进来,
+<pre>
+mov $0x5, %esi
+mov $0x2, %edi
+</pre>
+
+如果没有使用64 位的寄存器进行优化, 或参数多于6个, 就会使用内存的栈来实现:
+<pre>
+sub $0x8, %esp
+mov $0x5, -0x4(%ebp)
+mov $0x2, -0x8(%ebp)
+</pre>
+</p>
+
+<p>万事具备，是时候将执行控制权交给foo函数了，call指令完成交接任务：</p>
+
+<p><pre>
+0x000000000040052f &lt;main+14&gt;:     e8 d2 ff ff ff    callq  0x400506 &lt;foo&gt;
+</pre>
+
+一条call指令，完成了两个任务：</p>
+
+<p>
+    <ul>
+
+        <li>将调用函数(main)中的下一条指令(这里为0x400534)入栈，被调函数返回后将取这条指令继续执行，64位rsp寄存器的值减8
+
+        <li>修改指令指针寄存器rip的值，使其指向被调函数(foo)的执行位置，这里为0x400506
+    </ul></p>
+
+<h3>参考</h3>
+<p>&nbsp;<a href=http://www.searchtb.com/2013/03/x86-64_register_and_function_frame.html >http://www.searchtb.com/2013/03/x86-64_register_and_function_frame.html</a>&nbsp;&nbsp;<a href=http://www.cnblogs.com/bangerlee/archive/2012/05/22/2508772.html >http://www.cnblogs.com/bangerlee/archive/2012/05/22/2508772.html</a>&nbsp;</p>

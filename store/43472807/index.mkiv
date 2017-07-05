@@ -1,0 +1,131 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Title: bio
+%Class: kernel
+%Post:1
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+%
+bio为通用层的主要数据结构，既描述了磁盘的位置，又描述了内存的位置，是上层内核vfs与下层驱动的连接纽带。
+\starttyping
+struct bio {
+    sector_t bi_sector;              //该 bio 结构所要传输的第一个（512字节）扇区：磁盘的位置
+    struct bio *bi_next;             //请求链表
+    struct block_device *bi_bdev;    //相关的块设备
+    unsigned long bi_flags;          //状态和命令标志
+    unsigned long bi_rw;             //读写
+
+    unsigned short bi_vcnt;          //bio_vesc偏移的个数
+    unsigned short bi_idx;           //bi_io_vec的当前索引
+
+    unsigned short bi_phys_segments; //结合后的片段数目
+    unsigned short bi_hw_segments;   //重映射后的片段数目
+    unsigned int bi_size;            //I/O计数
+    unsigned int bi_hw_front_size;   //第一个可合并的段大小;
+    unsigned int bi_hw_back_size;    //最后一个可合并的段大小
+    unsigned int bi_max_vecs;        //bio_vecs数目上限
+
+    struct bio_vec *bi_io_vec;       //bio_vec链表：内存的位置
+
+    bio_end_io_t *bi_end_io;         //I/O完成方法
+    atomic_t bi_cnt;                 //使用计数
+    void *bi_private;                //拥有者的私有方法
+    bio_destructor_t *bi_destructor; //销毁方法
+};
+
+\stoptyping
+
+
+   此结构体的目的主要就是代表正在现场执行的I/O操作，
+   所以该结构体中的主要域都是用来相关的信息的，
+   而其中bi_io_vec、bi_vcnt、bi_idx 比较重要.
+
+这三者形成了这样一种关系：
+bio-->bi_io_vec, bi_idx(就如基地址加偏移量一般，可以轻易的找到具体的bio_vec)-->page（再通过vec找到page）;
+其中 bi_io_vec 指向一个 bio_vec 结构体数组，
+该结构体链表包含了一个特定的I/O操作所需要使用到的所有片段。
+每个bio_vec都是的向量，描述的是一个特定的片段: 片段所在的物理页，
+块在物理页中的偏移位置，从给定偏移量开始的块长度，整个bio_io_vec结构体数组表示了一个完整的缓冲区。
+
+\starttyping
+struct bio_vec {
+    struct page;    *bv_page;指向整个缓冲区所驻留的物理页面
+    unsigned int;    bv_len;这个缓冲区以字节为单位的大小
+    unsigned int;    bv_offset;缓冲区所驻留的页中以字节为单位的偏移量。
+};
+\stoptyping
+
+新版本的内核有做一些调整:
+\starttyping
+ * main unit of I/O for the block layer and lower layers (ie drivers and
+ * stacking drivers)
+ */
+struct bio {
+	struct bio		*bi_next;	/* request queue link */
+	struct block_device	*bi_bdev;
+	unsigned long		bi_flags;	/* status, command, etc */
+	unsigned long		bi_rw;		/* bottom bits READ/WRITE,
+						 * top bits priority
+						 */
+
+	struct bvec_iter	bi_iter;
+
+	/* Number of segments in this BIO after
+	 * physical address coalescing is performed.
+	 */
+	unsigned int		bi_phys_segments;
+
+	/*
+	 * To keep track of the max segment size, we account for the
+	 * sizes of the first and last mergeable segments in this bio.
+	 */
+	unsigned int		bi_seg_front_size;
+	unsigned int		bi_seg_back_size;
+
+	atomic_t		__bi_remaining;
+
+	bio_end_io_t		*bi_end_io;
+
+	void			*bi_private;
+     ........
+
+	unsigned short		bi_vcnt;	/* how many bio_vec's */
+
+	/*
+	 * Everything starting with bi_max_vecs will be preserved by bio_reset()
+	 */
+
+	unsigned short		bi_max_vecs;	/* max bvl_vecs we can hold */
+
+	atomic_t		__bi_cnt;	/* pin count */
+
+	struct bio_vec		*bi_io_vec;	/* the actual vec list */
+
+	struct bio_set		*bi_pool;
+
+	/*
+	 * We can inline a number of vecs at the end of the bio, to avoid
+	 * double allocations for a small number of bio_vecs. This member
+	 * MUST obviously be kept at the very end of the bio.
+	 */
+	struct bio_vec		bi_inline_vecs[0];
+};
+\stoptyping
+
+有一些调整. 我这里关注的是 bi_iter, 之前的版本是 bi_sector. 新版本里做了调整.
+把一些磁盘的信息集中到了 bvec_iter 中.
+
+\starttyping
+struct bvec_iter {
+	sector_t		bi_sector;	/* device address in 512 byte sectors */
+	unsigned int	bi_size;	/* residual I/O count */
+
+	unsigned int	bi_idx;		/* current index into bvl_vec */
+
+	unsigned int    bi_bvec_done;	/* number of bytes completed in current bvec */
+};
+\stoptyping
+
+
+
+
+

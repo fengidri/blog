@@ -1,0 +1,126 @@
+<p>
+本文来自于对于 Traffic Server Docuement的翻译.</p>
+
+<h3>Net Vconnections</h3>
+<p>Network Vconnection是对于 TCP Scoket 的包装, 让 socket 可以在Traffic Server的 Vconnection 框架下
+进行工作.</p>
+
+<h3>Vconnections 视角</h3>
+<p>一个VConnection实施者只写入转换。所有的其它VConnection(net VConnection和 cache VConnection) 都在 <b>iocore</b>中实施.
+如前面提到的，一个给定的vconnection具有很大的读取操作和写入操作。
+用户可以通过检查 <b>TSVConnRead, TSVConnWrite</b>的返回值, 来得到
+VConnection上的操作的情况.</p>
+
+<p>反过来, 操作者可以通过检查 <b>TSVConnReadVIOGet, TSVConnWriteVIOGet</b>的返回值, 来得到 VIO 的操作句柄. ( 而每一个VConnection都是通过Traffic Server的API, 并且
+有 read VIO 和 write VIO, 即使它只支持读或写.</p>
+
+<p>例如在 null transform 插件中, 通过如下代码检查 input VIO:
+<pre>
+input_vio = TSVConnWriteVIOGet (contp);
+</pre>
+
+这里的<b>contp</b>是transformation.</p>
+
+<p>一个VConnection是一个延展, 这意味着它要有一个处理函数来处理收到的事件.
+这个处理函数的工作就是检查事件, 查看当前的 read VIO 与 write VIO 的状态.
+还有任何其它的内部状态, 以及得到当前的 IO 操作的进度.</p>
+
+<p>一般来说, 所有VConnection的处理函数看起来是相似. 如下的代码段:</p>
+
+<p><pre>
+int
+vconnection_handler (TSCont contp, TSEvent event, void *edata)
+{
+if (TSVConnClosedGet (contp)) {
+        /* Destroy any vconnection specific data here. */
+        TSContDestroy (contp);
+        return 0;
+   } else {
+        /* Handle the incoming event */
+   }
+}
+</pre>
+
+这个基本的代码段显示了很多VConnection只是在自身被关闭的情况要销毁自己.
+但是, 在这种情况下, 也许要求VConnection做一些清理工作, 这就是为什么
+<b>TSVConnClose</b>没有是只是简单地销毁VConnection.</p>
+
+<p>VConnection是一个被收到的事件驱动的状态机. 当一个函数<b>TSVConnRead, TSVConnWrite, TSVConnClose, TSVConnShutdown, or TSVIOReenable</b>被执行一个事件会被发送到这个VConnection.
+<b>TSVIOReanable</b>通过 VIO 结构间接引用到VConnection. VConnection自身通过检查自身的状态
+还有自身的 VIO 的状态可以得知哪一个操作被执行.
+比如, 当<b>TSVConnClose</b>执行的时候, VConnection会收到一个 immediate 事件(TS_EVENT_IMMEDIATE). 对于VConnection收到的每一个状态, 要对于VConnection的关闭标识进行检查, 来查看,
+当前的VConnection是不是已经被关闭了. 相似的, 当<b>TSVIOReanable</b>被执行的时候,
+VConnection会收到一个 immediate 事件. 对于每一个事件, VConnection必须检查其 VIO, 来查看
+buffer 有没有被修改到一个可以进行操作的状态.</p>
+
+<p>最后, 一个VConnection可能是另一个VConnection的使用者. 它可能做为其它VConnection的使用都收到
+事件. When it receives such an event, like TS_EVENT_VCONN_WRITE_READY, it might just enable another vconnection that’s writing into the buffer used by the vconnection reading from it. The above description is merely intended to give the overall idea for what a vconnection needs to do.</p>
+
+<h3>Transformation VConnection</h3>
+<p>transformation是一个特殊的VConnection. 它支持的vconnection的功能，
+使一个或多个转换来被链接在一起的一个子集。
+transformation位于输入数据源和输出数据接收器之间的瓶颈, 这使它能够查看和修改都通过它的数据.
+另外，一些转换只需扫描数据，并通过它。
+一个常见的转换是一个压缩的数据以某种方式。</p>
+
+<p>transformation可以修改或者该数据流被发送到HTTP客户端（例如文档）或数据流从HTTP客户端（例如交数据）被发送。</p>
+
+<p>要做到这一点，transformation应勾上下面钩之一：
+
+    <ul>
+
+        <li>TS_HTTP_REQUEST_TRANSFORM_HOOK
+
+        <li>TS_HTTP_RESPONSE_TRANSFORM_HOOK
+    </ul></p>
+
+<p>请注意，由于一个transformation密切地与一个给定的事务相关联，
+它是唯一可能在钩添加到事务钩 - 不是全局或会话挂钩。
+transformation位于一个链中，所以他们的排序是很容易确定：即自己添加到链变革只是附加到它.</p>
+
+<p>数据被传进transformation通过启动一个 VConnection的写操作.
+作为该设计的结果，transformation必须支持VConnection写操作.
+就是说, 你的transformation必须有一个上流的VConnection写数据进来.
+transformation必须读取数据, 消耗数据, 并告诉上流VConnection结束了,
+通过发送 TS_EVENT_WRITE_COMPLETE 信号.
+transformation不能发送 TS_EVENT_WRITE_COMPLETE 信号, 给上流的
+VConnection, 除非它消耗了所有的输入的数据.
+当TS_EVENT_VCONN_WRITE_COMPLETE 信号被过早地发出, 一些内部的
+Traffic Server数据结构不能正常释放, 并会导致内存泄漏.</p>
+
+<p>下面展示了如何保存所有的输入的数据被消耗掉了.</p>
+
+<p>
+    <ul>
+
+        <li>在你读取或复制数据后, 确保你消耗了所有的数据, 并增加
+input VIO 的 ndone. 下面是 null-transform.c 中的例子:
+<pre>
+TSIOBufferCopy (TSVIOBufferGet (data-&gt;output_vio), TSVIOReaderGet (input_vio), towrite, 0);
+/* Tell the read buffer that we have read the data and are no longer interested in it. */
+TSIOBufferReaderConsume (TSVIOReaderGet (input_vio), towrite);
+/* Modify the input VIO to reflect how much has been read.*/
+TSVIONDoneSet (input_vio, TSVIONDoneGet (input_vio) + towrite);
+</pre>
+</p>
+
+<p>
+        <li>在发出 TS_EVENT_VCONN_WRITE_COMPLETE 之前, 你的transformation应该
+通过<b>TSVIONTodoGet(input_vio)</b>检查 在上流的VConnection写 VIO(input VIO)
+中剩余的字节数. 这个值应该变成0, 当所有的上流数据 被消费掉了.
+(TSVIONTodoGet = nbytes - ndone).
+在 TSVIONTodoGet 大于 0 的情况下, 不要发送 TS_EVENT_VCONN_WRITE_COMPLETE 信号.</p>
+
+<p>
+        <li>transformation通过<b>TSTransformOutputVConnGet</b>得到 output VConnection,
+并把自身的数据传递给它. 紧接着 Traffic Server初始化 write 操作(其会传递数据进transformation).
+它会设置输出VConnection到链路中的下一个transformation, 或到一个特殊的终端transformation(如
+这是链中最后一个transformation). 由于transformation对于输出VConnection有所有的权, 所以transformation在某一刻关闭它, 来释放内存.</p>
+
+<p>
+        <li>所有链中的transformation共享 transaction 的互斥锁.
+这个小的限制(由于<b>TSTransformCreate</b>强制执行)减小了
+生成一般性VConnection带来的锁并发的复杂性.
+例如，transformation没有必要在进行写操作 VIO 前试图得到 write VIO 锁,
+因为它知道它已经拥有互斥锁。
+    </ul></p>

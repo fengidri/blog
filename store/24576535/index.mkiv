@@ -1,0 +1,67 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Title: ATS - Ram Cache
+%Class: ats
+%Post:1
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\def\ramcache{RAM Cache}
+\def\clfus{CLFUS}
+\section{CLFUS}
+新的 \ramcache 策略 \clfus (Clocked Least Frequently Used by Size) 来源于多个缓存替换策略和算法,
+包换: LRU, LFU, CLOCK, GDFS and 2Q.
+没有使用任何专利算法, 并包含有如下特性:
+\startitemize
+\item 基于最大命中率(不是字节命中率)平衡 Recentness, Frequency and Size
+\item 即使工作集不适合在内存缓存中, 也可以保持Scan Resistant 和命中率的强健
+\item 支持三个级别的压缩:  fastlz, gzip (libz), and xz (liblzma). 压缩过程可以移到别的线程中去.
+\item 非常底的 CPU 占用, 只比基础的 LRU 高一点. 使用一个概率替代的方式实现成本比较底的
+O(1)性能, 而不是 O(lg n)
+\item 有相对较低的内存开销, 内存中每个对象约200字节。
+\stopitemize
+
+强调\bold{命中率}超过\bold{字节命中率}的理由是,
+从二级存储多个字节的开销相比是低成本的要求。
+
+对象的内存缓存由散列面对2 LRU /时钟列表和一个哈希表。
+第一个缓存列表包含对象在内存中,而另一个包含对象的历史,
+最近在内存中或正在考虑保持在内存中。
+看到哈希表是用于制造耐算法扫描。
+
+
+列表条目记录以下信息:
+\starttable
+\NC Value \VL Description \AR
+\NC key	            \VL 16 byte unique object identifier\AR
+\NC auxkeys   	    \VL 8 bytes worth of version number (in our system, the block in the partition). When the version of an object changes old entries are purged from the cache.\AR
+\NC hits	        \VL Number of hits within this clock period.\AR
+\NC size	        \VL size of the object in the cache.\AR
+\NC len	            \VL Length of the object, which differs from size because of compression and padding).\AR
+\NC compressed_len	\VL Compressed length of the object.\AR
+\NC compressed	    \VL Compression type, or none if no compression. Possible types are: fastlz, libz, and liblzma.\AR
+\NC uncompressible	\VL Flag indicating that content cannot be compressed (true), or that it mat be compressed (false).\AR
+\NC copy	        \VL Whether or not this object should be copied in and copied out (e.g. HTTP HDR).\AR
+\NC LRU link	 \AR
+\NC HASH link	 \AR
+\NC IOBufferData	\VL Smart point to the data buffer.\AR
+\stoptable
+
+缓存的接口是 \bold{Get} 或 \bold{Put} 操作. \bold{Get} 操作用于检查对象
+是不是在缓存中, 是一个读行为. \bold{Put} 操作决定了是否把提供的对象放到
+内存中缓存. 它被称为后从二级存储读取。
+
+
+
+\section{Seen Hash}
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,132 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Title: ATS - Ensuring Cached Object Freshness
+%Class: ats
+%Post:1
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+\def\ats{ Traffic Server }
+\def\os{源站}
+当\ats 收到一个请求, 它会先试图在缓存中定位这个资源.
+如果找到了资源, 那么还要对于资源的新鲜度进行检查, 以决定
+能不能直接使用它进行服务. 对于 HTTP 资源, \ats
+支持用户指定的过程时间(可选). \ats 会采用这个过期时间.
+否则, 它会在管理员指定的规则下依据资源的变化频率选择一个过期时间.
+资源也可以通过向\os 进行验证来判断资源是不是还是新鲜的.
+
+\section{HTTP Object Freshness}
+\ats 通过按顺序进行以下的检查来判断资源是不是新鲜.
+\startitemize
+\item 检查\bold{Expires} 或 \bold{max-age} 头.
+一些资源包含有\bold{Expires} 或\bold{max-age}
+这些明白地定义了资源应该缓存多长时间.
+\ats 会比较当前时间与过期时间来判断资源是不是新鲜.
+
+\item 检查\bold{Last-Modified / Date} 头
+如果资源没有Expires 或 max-age. 那么\ats 通过如下的公式进行计算:
+\starttyping
+freshness_limit = ( date - last_modified ) * 0.10
+\stoptyping
+
+这里的 date 与 last_modified 分别是头域里的对应的值.
+如果没有\bold{Last-Modified}头, \ats 会使用写入到缓存的时间.
+而 0.1 可以你自己进行调整. 参考: 后面的章节
+\bold{Modifying Aging Factor for Freshness Computations.}
+
+计算的结果会被一个最大值与最小值进行限定. 参考: 后面的章节 \bold{ Setting Absolute Freshness Limits}
+
+\item 检查绝对的新鲜度极限
+如果资源没有Expires, Last-Modified, Date \ats 会使用一个最大与最小
+新鲜度极限. 参考: 后面的章节:\bold{ Setting Absolute Freshness Limits.}
+
+\item 检查在\bold{Cache.config} 中的验证规则
+验证规则适用于指定的 HTTP 资源. 你可以
+针对于特定 domains 或 IP 地址
+或 URL 合符指定的规则, 或指定的客户端 设置新鲜度极限规则.
+
+\stopitemize
+
+
+\section{Modifying Aging Factor for Freshness Computations}
+如果有一个资源没有包含有任何过期信息, \ats 可以
+使用\bold{Last-Modified} 和 \bold{Date} 对于过期时间
+进行估计. 默认情况下\ats 会缓存一个资源从上一次修改到现在的
+10\% 的时间, 当然可以进行修改:
+修改如下的变量:
+\starttyping
+proxy.config.http.cache.heuristic_lm_factor.
+\stoptyping
+
+\section{Setting Absolute Freshness Limits}
+有一些资源没有任何Expires, Last-Modified, Date.
+可以通过绝对的新鲜极限来对于缓存时间进行控制.
+配置如下变量:
+\starttyping
+proxy.config.http.cache.heuristic_min_lifetime
+proxy.config.http.cache.heuristic_max_lifetime
+\stoptyping
+
+\section{Specifying Header Requirements}
+为了进一步确保在缓存中的对象的新鲜度，配置\ats仅缓存带特定头的对象。
+默认情况下, \ats 会缓存所有的对象, 即使不带有头.
+只有对于专门的代理服务器你才应该修改这个设置.
+如果你只缓存带有 Expires 和 max-age 的头, 那么缓存命中率会下降.
+ 修改如下选项:
+\starttyping
+ proxy.config.http.cache.required_headers
+\stoptyping
+
+\section{Cache-Control Headers}
+Even though an object might be fresh in the cache, clients or servers often impose their own constraints that preclude retrieval of the object from the cache. For example, a client might request that a object not be retrieved from a cache, or if it does allow cache retrieval, then it cannot have been cached for more than 10 minutes.
+
+\ats 基于服务响应的或用户请求的中的 \bold{Cache-Control} 处理
+缓存的对象.
+下面列出了\bold{Cache-Control} 如何影响从缓存中提取数据:
+\startitemize
+\item 用户请求中的 no-cache 告诉 \ats 不从缓存中提取数据.
+当出现在请求里, \ats 总会从\os 去获取数据. 当然你可以设置\ats 忽略
+用户的\bold{no-cache}.
+\starttyping
+CONFIG proxy.config.http.cache.ignore_client_no_cache INT 1
+\stoptyping
+
+\item \bold{max-age} 由于\os 提供, 用于比较老化度, 如果老化时间
+小于它就说明是新鲜的.
+
+\item \bold{min-fresh} 由于用户发送, 是一个可接受的新鲜度公差.
+This means that the client wants the object to be at least this fresh. Unless a cached object remains fresh at least this long in the future, it is revalidated.
+
+\item \bold{max-stale} 由于用户发送, 允许\ats 提供一个过期时间不是太大的
+过期了的对象. 一些浏览器也许愿意使用一个略旧的对象, 以获得性能上的
+提升, 特别是当网络不好的时候.
+\stopitemize
+Traffic Server的HTTP新鲜感标准后适用的Cache-Control servability标准。
+例如，一个对象可能被认为是新的，但如果它的年龄大于它的最大年龄将无法送达。
+
+\section{Revalidating HTTP Objects}
+当用户请求的对象在缓存中已经过期了, \ats 会重新验证.
+会发送给\os 一个重新验证的请求, 来检查资源有没有修改.
+会出现如下的结果:
+\startitemize
+\item 如果资源不还是新鲜的, 那么\ats 会重新设置资源的新鲜度, 并把缓存
+返回给用户.
+\item 如果\os 返回一个新的资源, 那么\ats 会把资源进行缓存, 同时
+同步地返回给用户.
+\item 如果资源不存在了, 那么\ats 不会使用缓存的资源.
+\item 如果\os 没有响应, 那么, \ats 会使用过期的资源, 并给出\bold{
+111 Revalidation Failed } 的警告.
+\stopitemize
+
+默认情况下, \ats 在认为一个资源过期的情况会对其进行重新验证.
+你可以对于\ats 的行为做如何选择:
+\starttyping
+Traffic Server considers all HTTP objects in the cache to be stale:
+    Always revalidate HTTP objects in the cache with the origin server.
+Traffic Server considers all HTTP objects in the cache to be fresh:
+    Never revalidate HTTP objects in the cache with the origin server.
+Traffic Server considers all HTTP objects without Expires or Cache-control headers to be stale:
+    Revalidate all HTTP objects without Expires or Cache-Control headers.
+\stoptyping
+
+
+配置项:  proxy.config.http.cache.when_to_revalidate

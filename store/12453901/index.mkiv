@@ -1,0 +1,103 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Title: The SO_REUSEPORT socket option
+%Class: linux api
+%Post:1
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+内核3.9开发周期的一个特性是合并进入了\bold{SO_REUSEPORT}\ socket选项.
+这是基于\bold{Tom Herbert}的一系列的patches而实现的.
+这个选项允许相同机器上多个socket绑定到相同的端口上. 这个实现的目的在
+于提高运行于多核系统上的多线程网络应用的性能.
+
+对于这个功能的概念的理解很简单. 多个服务(线程或进程)可以绑定到
+相同的端口. 如果他们设置了如下的选项.
+
+\starttyping
+int sfd = socket(domain, socktype, 0);
+
+int optval = 1;
+setsockopt(sfd, SOL_SOCKET, SO_REUSEPORT, &optval, sizeof(optval));
+
+bind(sfd, (struct sockaddr *) &addr, addrlen);
+\stoptyping
+
+
+
+
+只要第一个服务进程在绑定socket 之前设置了这个选项, 这样其它任意的
+服务进程只要设置了这个选项也可以绑定到这个相同端口.
+第一个服务进程必须要设置有这个选项, 这样做的目的是防止其它的恶意的
+程序也绑定到已经使用中的服务端口. 为了防止其它的恶意的进程劫持
+已经使用SO_REUSEPORT绑定的端口, 所以规定, 在第一个服务之后绑定
+到这样的端口的进程必然拥有有效的用户ID, 这个用户与第一个绑定到这个端口上的
+用户是相匹配的.
+
+SO_REUSEPORT 可以使用于TCP 还有 UDP sockets.
+对于TCP 而言, 它可以实现监听多个绑定于相同端口的sockets,
+这通常每一个都在不同的线程中,
+每一个线程都可以通过\bold{accept()}来得到连接上输入的数据.
+这种方法是对于使用传统多线程单个sockets的数据传入方法的替代.
+
+第一种传统的方法是有一个单独的监听线程用于接收所有的数据, 并传递这些数据
+到其它的线程进行数据处理.
+这种方法的问题是，监听线程可以成为在极端的情况下的一个瓶颈。
+在SO_REUSEPORT早期的讨论，汤姆说，他正在处理与接受每秒40,000个连接的应用程序。
+这是令人吃惊地得知，汤姆工作在谷歌。
+
+传统中第二种工作于单个端口的多线程服务是所有的线程(或进程)都在一个
+简单的事件循环中基于一个单独的socket执行\bold{accept()}调用.
+
+\starttyping
+    while (1) {
+        new_fd = accept(...);
+        process_connection(new_fd);
+    }
+\stoptyping
+正如Tom 指出的, 这个方法的问题在于, 当多线程在等待\bold{accpet()},
+唤醒是不公平的. 因此在高负载的情况下, 输入的数据在线程中的分布是不
+平衡的.
+在Google, 他们已经发现了线程接收的最多的连接与线程接收的最少的连接
+中间有三倍的差距. 这种不平衡的分配会使得CPU 核的利用不足.
+相比之下, SO_REUSEPORT 的实现可以把连接均匀地分布在所有的阻塞在
+\bold{accept()} 监听同个端口的线程上.
+
+
+如同于TCP, SO_REUSEPORT 也是允许多个UDP sockets被绑定到同个一端口上.
+这个优势可能是很有用的, 对于如DNS 服务一样的基于UDP 的服务而言.
+基于SO_REUSEPORT, 每一个线程可以使用\bold{recv()}来接收到达端口的
+数据报. 传统的方法是所有的线程会进行竞争来在一个共享的socket
+上执行\bold{recv()}. 与上文所述的第二种TCP的情况相似, 这也会导致整个
+线程不平衡负载的情况.
+相对而言,  SO_REUSEPORT 可以把数据报平均地分到多个可达的线程上.
+
+Tom 指出, 传统的socket 选项\bold{SO_REUSEADDR}已经允许多个UDP socket
+被绑定(并接收数据)到相同的UDP 端口. 但是不同于SO_REUSEPORT,
+SO_REUSEADDR 不会阻止端口劫持, 并不能对于数据报进行平等地分发.
+
+在Tom 的补丁中有两点是值得一提的. 其中第一项就是实施了有用的方面,
+连接和数据报的分布是基于一个hash. 这个hash 使用了连接的四元组, 远端的
+地址和端口, 本地的地址和端口.
+这意味着, 如果一个客户端使用了一个相同的socket 发送了一系列的数据报给服务
+端口. 那么这些数据报会被分给同一个相同的服务(只要这个服务还在).
+这会使得保持客户端和服务器间的会话状态的任务变得简单.
+
+另一个值得一提的是, 在当前的TCP SO_REUSEPORT 的实现中有一个缺陷.
+如果因为有新的服务, 或有服务结束, 使得绑定到端口上的sockets的数据发生了变化,
+有可能在三次握手的期间使一个新的连接被丢掉. 这个问题的原因在于:
+在握手期间初始的SYN 包收到的时候, 连接请求会试着去指定一个连接请求. 这样
+当绑定的服务的数据发生变化, SO_REUSEPORT 的逻辑也许不能
+把最后的ACK 路由到那个监听的socket. 这处情况下, 客户端的连接会被reset.
+服务器留下一个孤立的请求结构. 一个解决问题仍在商讨，并可以由实施的连接请求表可在多个监听套接字之间共享的。
+
+所述SO_REUSEPORT选择是非标准的，但是可以在一些其它的类UNIX系统（特别是，BSD系统，其中该想法起源）见到。
+它提供了一种用于在多核系统上的网络应用中挤压高性能上的方法，的有用的替代，
+因此很可能是一个受一些应用程序开发人员欢迎特性。
+
+
+
+
+
+\section{参考}
+\startitemize
+\item  \goto{The SO_REUSEPORT socket option}{https://lwn.net/Articles/542629/}
+\item  \goto{index : kernel/git/torvalds/linux.git}{http://git.kernel.org/cgit/linux/kernel/git/torvalds/linux.git/commit/?id=055dc21a1d1d219608cd4baac7d0683fb2cbbe8a}
+\stopitemize
