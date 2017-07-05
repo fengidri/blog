@@ -1,9 +1,9 @@
 var INDEX;
 var ALLIDS;
 
-var URL_INDEX    = 'store/index.json';
-var URL_CLASS    = 'store/class.json';
-var URL_PREFIX   = 'store/';
+var URL_INDEX    = '../store/index.json';
+var URL_CLASS    = '../store/class.json';
+var URL_PREFIX   = '../store/';
 var CHAPTER_URL;
 
 var DIV_LISTPOST;
@@ -55,7 +55,7 @@ function DataInit()//从服务器得到数据信息
                   else{
                       CLASS[info.class] = [i];
                   }
-                  
+
 		  info.date = PaserDate(info.ctime);
                   if (-1 == YEARS.indexOf(info.date.year))
                       YEARS.push(info.date.year)
@@ -63,19 +63,20 @@ function DataInit()//从服务器得到数据信息
                   TexIds.push(i);
               }
 
-              YEARS.reverse();
-              FILTER.year = YEARS[0];
               TexIds.sort(sortNumber);
-              ListClass(CLASS);
+//              ListClass(CLASS);
 
-	      for (var i in YEARS){
-		      var y = $("<span>").text(YEARS[i]);
-		      y[0]._data = YEARS[i];
-
-		      y.click(function(){ FILTER.year = this._data; ShowListPost(); })
-
-		      $("div#yearselect").append(y);
-	      }
+//              YEARS.reverse();
+//              FILTER.year = YEARS[0];
+//
+//	      for (var i in YEARS){
+//		      var y = $("<span>").text(YEARS[i]);
+//		      y[0]._data = YEARS[i];
+//
+//		      y.click(function(){ FILTER.year = this._data; ShowListPost(); })
+//
+//		      $("div#yearselect").append(y);
+//	      }
 	  },
     });
 }
@@ -143,11 +144,11 @@ function ShowListPost()// 显示list post
 
     FILTER.class = filter_class;
 
-    $("div#yearselect span").each(function(){
-            if ($(this).text() == FILTER.year) $(this).css("background", "grey");
-            else
-               $(this).css("background", "white")
-		    });
+//    $("div#yearselect span").each(function(){
+//            if ($(this).text() == FILTER.year) $(this).css("background", "grey");
+//            else
+//               $(this).css("background", "white")
+//		    });
 
     var month;
     var year;
@@ -159,8 +160,8 @@ function ShowListPost()// 显示list post
         var info = INFOS[ID];
         var date = info.date;
 
-        if (FILTER.class && FILTER.class != info.class) continue;
-        if (FILTER.year && FILTER.year != date.year) continue;
+//        if (FILTER.class && FILTER.class != info.class) continue;
+//        if (FILTER.year && FILTER.year != date.year) continue;
 
         if (date.month != month)
         {
@@ -172,9 +173,7 @@ function ShowListPost()// 显示list post
             month = date.month;
         }
 
-        var t = $('<div>').text(info.title);
-        t[0].chapterid = ID;
-
+        var t = $('<a href=chapter.html?id=' + ID + ' >').text(info.title);
         DIV_LISTPOST.append(t);
     }
     $(document).scrollTop( 0 /*DIV_LISTPOST.offset( ).top*/ );
@@ -198,13 +197,13 @@ function ClassShowListPost()// 通过类显示list post
     }
 }
 
-function EShowChapter()// 用于事件回调
-{
-    if (this.chapterid == undefined) return;
-    var n = '/chapter.html?id=' + this.chapterid;
-    window.location.href =
-        window.location.href.replace(/\/[^/]*$/, n)
-}
+//function EShowChapter()// 用于事件回调
+//{
+//    if (this.chapterid == undefined) return;
+//    var n = '/chapter.html?id=' + this.chapterid;
+//    window.location.href =
+//        window.location.href.replace(/\/[^/]*$/, n)
+//}
 
 
 

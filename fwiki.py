@@ -5,7 +5,6 @@
 #    version   :   1.0.1
 
 # 本模块只提供blog 信息的数据修改, 并不提供读取分析功能
-
 import os
 from cottle import  handle
 import json

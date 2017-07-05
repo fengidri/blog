@@ -107,7 +107,7 @@ $(document).ready(function(){
 
 
 
-    DIV_LISTPOST.on('click', 'div', EShowChapter);
+//    DIV_LISTPOST.on('click', 'div', EShowChapter);
     DIV_CLASS.on('click', 'div', ClassShowListPost);
     $('div#class_container h3').click(function(){
         $('div#class_div' ).toggle();
