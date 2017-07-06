@@ -15,6 +15,7 @@ import stat
 import shutil
 
 import jinja2
+import textohtml
 
 
 def store_git():
@@ -76,7 +77,7 @@ def update_info(ID):
             continue
 
         key = t[0].lower().strip()
-        value = t[1].strip()
+        value = t[1].strip().decode('utf8')
         info[key] = value
 
     open(info_path, 'w').write(json.dumps(info))
@@ -130,6 +131,14 @@ def get_infos():
     return infos
 
 def render():
+    for i in store_git():
+        src_path = "store/%s/index.mkiv" % i
+        html_path = "store/%s/index.html" %i
+        print "render html: %s" % html_path
+        html = textohtml.html(src_path)
+        open(html_path, 'w').write(html.encode('utf8'))
+
+
     template = open("web/index.html.sample").read().decode('utf8')
     template =  jinja2.Template(template)
     html = template.render(infos = get_infos())
@@ -137,11 +146,6 @@ def render():
 
 
 def main():
-    if len(sys.argv) == 1:
-        render()
-        return
-
-
     op = sys.argv[1]
     if op == 'new':
         new = create()
