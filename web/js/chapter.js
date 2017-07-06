@@ -36,7 +36,6 @@ function ShowChapter(ID)
         url:url,
         async: false,
         success: function(data){
-    console.log(url)
             content.html(data);
         }
     });

@@ -1,8 +1,8 @@
 <html>
 <head>
 <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
-<link rel="Stylesheet" type="text/css" href='./fwiki/fwiki.css' />
-<link rel="Stylesheet" type="text/css" href='./fwiki/show.css' />
+<link rel="Stylesheet" type="text/css" href='./css/fwiki.css' />
+<link rel="Stylesheet" type="text/css" href='./css/show.css' />
 <link rel="Stylesheet" type="text/css" href='prettify/prettify.css' />
 
 
@@ -11,7 +11,7 @@
 <script src='layer/layer.min.js'></script>
 <script src='js/index.js'></script>
 <!--script src='./fwiki/layout.js'></script-->
-<script src='./fwiki/options.js'></script>
+<script src='./js/options.js'></script>
 
 
 
