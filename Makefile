@@ -15,6 +15,7 @@ list:
 
 post:
 	@python2 bin/blog.py render
-	@git commit -a -m 'post blog'
+	@git add *
+	@git commit -m 'post blog'
 	@git push aliyun
 	@git push
