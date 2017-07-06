@@ -1,14 +1,13 @@
 function ShowChapter(ID)
 {
-    var info = INFOS[ID];
-    var cls     = DIV_CHAPTER.find('#class');
-    var time    = DIV_CHAPTER.find('#time');
-    var title   = DIV_CHAPTER.find('#ctitle');
+    //var info = INFOS[ID];
+    //var cls     = DIV_CHAPTER.find('#class');
+    //var time    = DIV_CHAPTER.find('#time');
+    //var title   = DIV_CHAPTER.find('#ctitle');
 
-    var content = DIV_CHAPTER.find('#content');
 
-    time.text(info.ctime);
-    cls.text(info.class);
+    //time.text(info.ctime);
+    //cls.text(info.class);
 
     //if (!info.post)
     //{
@@ -21,22 +20,23 @@ function ShowChapter(ID)
     //}
 
 
-    var p = 'http://blog.fengidri.me/?id=' + ID;
-    title.html($('<a>').text(info.title).attr('href', p));
-    //DuoshuoShow(ID, info.title, p);
+    //var p = 'http://blog.fengidri.me/?id=' + ID;
+    //title.html($('<a>').text(info.title).attr('href', p));
 
-    DIV_CHAPTER.show();
+    //DIV_CHAPTER.show();
 
     CHAPTER_ID = ID;
 
     CHAPTER_URL = URL_PREFIX + ID;
 
     var url = CHAPTER_URL + '/index.html';
+    var content = $('#content');
 
     $.ajax({
         url:url,
         async: false,
         success: function(data){
+    console.log(url)
             content.html(data);
         }
     });
@@ -131,7 +131,6 @@ $(document).ready(function(){
     }
 
 
-    DataInit();
     var ID=getUrlParams().id;
     if (ID){
         ShowChapter(ID);

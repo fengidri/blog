@@ -25,61 +25,61 @@ var CLASS  = [];
 var FILTER = {}
 var YEARS = [];
 
-function DataInit()//从服务器得到数据信息
-{
-    function sortNumber(a,b)
-    {
-        return b - a;
-    }
-
-    $.ajax({
-          url : URL_INDEX,
-          async : false,
-          dataType:'json',
-          success : function(index){
-              INFOS = index;
-              for (i in INFOS)
-              {
-                  var info = INFOS[i];
-                  if (info.post == '0')
-                      continue;
-
-                  if (info.class == '' || info.class == undefined)
-                  {
-                      info.class = '未分类';
-                  }
-                  if (CLASS[info.class])
-                  {
-                      CLASS[info.class].push(i);
-                  }
-                  else{
-                      CLASS[info.class] = [i];
-                  }
-
-		  info.date = PaserDate(info.ctime);
-                  if (-1 == YEARS.indexOf(info.date.year))
-                      YEARS.push(info.date.year)
-
-                  TexIds.push(i);
-              }
-
-              TexIds.sort(sortNumber);
-//              ListClass(CLASS);
-
-//              YEARS.reverse();
-//              FILTER.year = YEARS[0];
+//function DataInit()//从服务器得到数据信息
+//{
+//    function sortNumber(a,b)
+//    {
+//        return b - a;
+//    }
 //
-//	      for (var i in YEARS){
-//		      var y = $("<span>").text(YEARS[i]);
-//		      y[0]._data = YEARS[i];
+//    $.ajax({
+//          url : URL_INDEX,
+//          async : false,
+//          dataType:'json',
+//          success : function(index){
+//              INFOS = index;
+//              for (i in INFOS)
+//              {
+//                  var info = INFOS[i];
+//                  if (info.post == '0')
+//                      continue;
 //
-//		      y.click(function(){ FILTER.year = this._data; ShowListPost(); })
+//                  if (info.class == '' || info.class == undefined)
+//                  {
+//                      info.class = '未分类';
+//                  }
+//                  if (CLASS[info.class])
+//                  {
+//                      CLASS[info.class].push(i);
+//                  }
+//                  else{
+//                      CLASS[info.class] = [i];
+//                  }
 //
-//		      $("div#yearselect").append(y);
-//	      }
-	  },
-    });
-}
+//		  info.date = PaserDate(info.ctime);
+//                  if (-1 == YEARS.indexOf(info.date.year))
+//                      YEARS.push(info.date.year)
+//
+//                  TexIds.push(i);
+//              }
+//
+//              TexIds.sort(sortNumber);
+////              ListClass(CLASS);
+//
+////              YEARS.reverse();
+////              FILTER.year = YEARS[0];
+////
+////	      for (var i in YEARS){
+////		      var y = $("<span>").text(YEARS[i]);
+////		      y[0]._data = YEARS[i];
+////
+////		      y.click(function(){ FILTER.year = this._data; ShowListPost(); })
+////
+////		      $("div#yearselect").append(y);
+////	      }
+//	  },
+//    });
+//}
 
 function ListClass(CLASS)
 {

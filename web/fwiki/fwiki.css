@@ -9,7 +9,7 @@ body{
 a{
     color:black;
 }
-#index, #chapter{
+#index{
     display:none;
 }
 div#h2, div#h3, div#h4, div#h5, div#h6{
@@ -115,6 +115,9 @@ h2#ctitle a{
     counter(counter_subsection)'.'
     counter(counter_subsubsection)'. ';
 }
+#content a{
+    margin: 0;
+}
 
 
 /*用于目录的整体*/
@@ -185,7 +188,7 @@ h2#ctitle a{
     margin:     auto;
 }
 #listpost{
-    width:      700px;
+    width:      900px;
     margin:     auto;
     min-height: 800px;
     padding:    2em;
@@ -202,21 +205,18 @@ h2#ctitle a{
     /*border:     1px     solid;*/
 }
 #listpost a{
-    width:      85%;
+    width:      100%;
     /*border:     1px solid;
     border:     0px     solid;
     border-bottom:     1px     solid;
-    */
-    display:    block;
     margin:     auto;
     padding:    1em;
+    padding-bottom: 3px;
+    */
+    display:    block;
     font-size:  15px;
     text-align: left;
     cursor:     pointer;
-    padding-bottom: 3px;
-}
-#listpost div span{
-    margin: 2em;
 }
 #edit{
     position:fixed;
@@ -274,4 +274,16 @@ div#buttom{
 }
 img{
    max-width: 85%;
+}
+
+
+span.time{
+    display: inline-block;
+    width: 160pt;
+    color: black;
+    float: right;
+}
+span.title{
+    font-size: 18pt;
+    margin: 0pt;
 }
