@@ -38,6 +38,11 @@ h1#title{
     margin-top: 2em;
     text-align: center;
 }
+h2#ctitle{
+    margin: auto;
+    margin-top: 2em;
+    text-align: center;
+}
 div#title
 {
     margin:2em;
@@ -54,10 +59,6 @@ div#title a{
 #content h1
 {
     color:green;
-}
-h2#ctitle{
-    margin:0 0 5 0;
-    font-size:18pt;
 }
 h2#ctitle a{
     text-decoration: none;

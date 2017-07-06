@@ -1,35 +1,28 @@
+
+function ShowChapterInfo(info)
+{
+    var cls     = DIV_CHAPTER.find('#class');
+    var time    = DIV_CHAPTER.find('#time');
+    var title   = DIV_CHAPTER.find('#ctitle');
+
+    info = JSON.parse(info)
+
+    title.html(info.title);
+    time.text(info.ctime);
+    cls.text(info.class);
+}
+
+
 function ShowChapter(ID)
 {
-    //var info = INFOS[ID];
-    //var cls     = DIV_CHAPTER.find('#class');
-    //var time    = DIV_CHAPTER.find('#time');
-    //var title   = DIV_CHAPTER.find('#ctitle');
+    $.get("../store/" + ID + "/info", ShowChapterInfo);
 
-
-    //time.text(info.ctime);
-    //cls.text(info.class);
-
-    //if (!info.post)
-    //{
-    //    var t = $('<div>');
-    //    t.css('background', 'red').css('border', '1px solid');
-    //    t.css('padding', '1em').css('text-align', 'center');
-    //    t.text('本文还没有正式发布');
-    //    content.before(t);
-    //    return;
-    //}
-
-
-    //var p = 'http://blog.fengidri.me/?id=' + ID;
-    //title.html($('<a>').text(info.title).attr('href', p));
-
-    //DIV_CHAPTER.show();
 
     CHAPTER_ID = ID;
 
     CHAPTER_URL = URL_PREFIX + ID;
 
-    var url = CHAPTER_URL + '/index.html';
+    var url = "../store/" + ID + "/index.html";
     var content = $('#content');
 
     $.ajax({
@@ -39,43 +32,39 @@ function ShowChapter(ID)
             content.html(data);
         }
     });
+
     index_init(DIV_INDEX, content, $('#index_switch'));
     content.find("pre").addClass("prettyprint");
     prettyPrint();
     // TODO 此时得到的index 的宽度总是1? 但是在resume里可以得正常的值
     close_attach_auto();
+
     //ResizeImg(content.find('img'));
-    SplitPages(content);
-}
-function DuoshuoShow(ID, Title, Url)
-{
-    DIV_DUOSHUO.attr('data-thread-id', ID);
-    DIV_DUOSHUO.attr('data-thread-key', ID);
-    DIV_DUOSHUO.attr('data-title', Title);
-    DIV_DUOSHUO.attr('data-url', Url);
-    duoshuoQuery['thread_key'] = ID;
-    duoshuoQuery['thread_title'] = Title;
-    DUOSHUO.EmbedThread(DIV_DUOSHUO[0]);
+    //SplitPages(content);
 }
 
-function SplitPages(content)
-{
-    var hs = 1176;
-    var h = content.height();
-    var p = $('div#page');
-    var offset_l = content.offset().left + content.outerWidth();
-    var offset_t = content.offset().top;
-    var i;
-    for(i=1; i< h/hs; i++)
-    {
-        var _p = p.clone();
-        _p.show();
-        $('body').append(_p);
-        _p.offset({top: i * hs + offset_t, left: offset_l});
-        _p.text(i + '.');
-    }
 
-}
+
+
+//function SplitPages(content)
+//{
+//    var hs = 1176;
+//    var h = content.height();
+//    var p = $('div#page');
+//    var offset_l = content.offset().left + content.outerWidth();
+//    var offset_t = content.offset().top;
+//    var i;
+//    for(i=1; i< h/hs; i++)
+//    {
+//        var _p = p.clone();
+//        _p.show();
+//        $('body').append(_p);
+//        _p.offset({top: i * hs + offset_t, left: offset_l});
+//        _p.text(i + '.');
+//    }
+//
+//}
+
 function ResizeImg(Imgs) // 调整图片的宽度
 {
     function resize()
@@ -97,6 +86,7 @@ function ResizeImg(Imgs) // 调整图片的宽度
 $(document).ready(function(){
     //在窗口大小发生变化的时候调用些函数
     window.onresize = close_attach_auto;
+
     DIV_LISTPOST = $('div#listpost');
     DIV_HEADER   = $('div#header');
     DIV_CLASS    = $('div#class_div');
@@ -105,8 +95,6 @@ $(document).ready(function(){
     DIV_DUOSHUO  = $('div.ds-thread');
 
 
-
-//    DIV_LISTPOST.on('click', 'div', EShowChapter);
     DIV_CLASS.on('click', 'div', ClassShowListPost);
     $('div#class_container h3').click(function(){
         $('div#class_div' ).toggle();
@@ -133,8 +121,6 @@ $(document).ready(function(){
     var ID=getUrlParams().id;
     if (ID){
         ShowChapter(ID);
-        //$('div#title #class').text(INFOS[ID].class).attr('href', GetClassHref(ID));
-
     }
 });
 
