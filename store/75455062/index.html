@@ -81,4 +81,4 @@ int __sk_mem_schedule(struct sock *sk, int size, int kind)
 
 以上是相关性的函数. 在 __sk_mem_schedule 中有一个 size 转成 amt 的过程, 这个过程是基于 page
 进行计算的. 后面对于memory_allocated 的增加都是直接增加的 amt 这个变量. 所以这里认为其就是以 page
-</p>
+ 为单位的.</p>
