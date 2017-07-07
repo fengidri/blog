@@ -123,6 +123,9 @@ def get_infos():
 
         info = get_info(i)
         if info:
+            post = info.get("post")
+            if post == "0":
+                continue
             infos.append(info)
 
 
@@ -147,7 +150,7 @@ def render():
 
 def main():
     op = sys.argv[1]
-    if op == 'new':
+    if op == 'new' or op == "create":
         new = create()
         os.system("vim %s -c 'read draft/template'" % new)
         return;
@@ -158,6 +161,25 @@ def main():
 
     if op == 'list':
         op_list()
+        return
+
+    if op == "post":
+        render()
+        os.system("git add *")
+        os.system("git commit -m 'post blog'")
+        os.system("git push aliyun")
+        return
+
+
+    if op.isdigit():
+        index_path = "store/%s/index.mkiv" % op
+        if os.path.isfile(index_path):
+            os.system("vim %s" % index_path)
+        else:
+            print "ID:%s not exists." % op
+        return
+
+    print "do nothing"
 
 
 
