@@ -85,12 +85,21 @@ kernel, perf, cache
 
          <div id=list>
          <ul>
-         {% for info in infos %}
-         <li><a href="chapter.html?id={{info['id']}}">
-            <span class=title>{{info['title']}}</span>
-            <span class=time>{{info['showtime']}}</span>
-            </a></li>
-         {% endfor %}
+              {% set year = infos[0]['showtime'][0:4] %}
+
+              {% for info in infos %}
+                  {% if year != info['showtime'][0:4] %}
+                      {% set year = info['showtime'][0:4] %}
+                      <br/><hr/><br/>
+                  {% endif %}
+                  <li>
+                      <a href="chapter.html?id={{info['id']}}">
+                          <span class=title>{{info['title']}}</span>
+                          <span class=time>{{info['showtime']}}</span>
+                     </a>
+                  </li>
+              {% endfor %}
+                 <br/><hr/>
          </ul>
          </div>
     </div>
