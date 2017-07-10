@@ -167,7 +167,7 @@ def main():
         render()
         os.system("git add *")
         os.system("git commit -m 'post blog'")
-        os.system("git push aliyun")
+        os.system("git push")
         return
 
 
